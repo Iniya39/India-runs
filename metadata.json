@@ -1,0 +1,6 @@
+{
+  "name": "TalentSphere",
+  "description": "A warm, modern, optimistic AI recruiting platform with a beautiful design system.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
