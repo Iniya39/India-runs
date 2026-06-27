@@ -1,62 +1,180 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { StyleGuide } from './screens/StyleGuide';
 import { AuthScreen } from './screens/AuthScreen';
 import { RoleSelectionScreen } from './screens/RoleSelectionScreen';
 import { DashboardScreen } from './screens/DashboardScreen';
 
+// Firebase Auth & Firestore imports
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { auth, db } from './firebase';
+
 type ScreenName = 'style-guide' | 'auth' | 'role-selection' | 'dashboard';
 
 interface UserSession {
+  uid: string;
   name: string;
   email: string;
-  role: 'candidate' | 'recruiter';
+  role: 'candidate' | 'recruiter' | null;
 }
 
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<ScreenName>('style-guide');
-  
-  // Track mock auth & session details
-  const [session, setSession] = useState<UserSession>({
-    name: 'Demo Builder',
-    email: 'demo@talentsphere.com',
-    role: 'candidate'
-  });
+  const [session, setSession] = useState<UserSession | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const handleSignupSuccess = (userData: { name: string; email: string }) => {
-    setSession({
-      name: userData.name,
-      email: userData.email,
-      role: 'candidate' // Default role to candidate initially
+  // Monitor auth state changes & handle session persistence
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        try {
+          const userDocRef = doc(db, 'users', user.uid);
+          const userDocSnap = await getDoc(userDocRef);
+
+          if (!userDocSnap.exists()) {
+            // New user signed up, but Firestore document doesn't exist yet
+            // Let's create a default profile (handleSignupSuccess will also double check/enrich this with displayName)
+            const newUser = {
+              email: user.email || '',
+              displayName: user.displayName || user.email?.split('@')[0] || 'Anonymous',
+              createdAt: serverTimestamp(),
+              role: null,
+              onboardingComplete: false,
+            };
+            await setDoc(userDocRef, newUser, { merge: true });
+            
+            setSession({
+              uid: user.uid,
+              name: newUser.displayName,
+              email: newUser.email,
+              role: null,
+            });
+            setCurrentScreen('role-selection');
+          } else {
+            // Existing user
+            const data = userDocSnap.data();
+            setSession({
+              uid: user.uid,
+              name: data.displayName || user.displayName || 'Anonymous',
+              email: data.email || user.email || '',
+              role: data.role || null,
+            });
+
+            if (!data.role) {
+              setCurrentScreen('role-selection');
+            } else {
+              setCurrentScreen('dashboard');
+            }
+          }
+        } catch (error) {
+          console.error('onAuthStateChanged session fetch error:', error);
+        }
+      } else {
+        setSession(null);
+        setCurrentScreen('style-guide');
+      }
+      setLoading(false);
     });
-    // On signup: always proceed to role selection screen first
-    setCurrentScreen('role-selection');
+
+    return () => unsubscribe();
+  }, []);
+
+  const handleSignupSuccess = async (userData: { name: string; email: string }) => {
+    const user = auth.currentUser;
+    if (user) {
+      const userDocRef = doc(db, 'users', user.uid);
+      const newUser = {
+        email: user.email || userData.email,
+        displayName: userData.name || user.displayName || 'Anonymous',
+        createdAt: serverTimestamp(),
+        role: null,
+        onboardingComplete: false,
+      };
+      await setDoc(userDocRef, newUser, { merge: true });
+      
+      setSession({
+        uid: user.uid,
+        name: newUser.displayName,
+        email: newUser.email,
+        role: null,
+      });
+      setCurrentScreen('role-selection');
+    }
   };
 
-  const handleLoginSuccess = (userData: { email: string }) => {
-    // If logging in as demo, give prefilled values
-    const isDemo = userData.email.toLowerCase() === 'demo@talentsphere.com';
-    setSession({
-      name: isDemo ? 'Demo Builder' : userData.email.split('@')[0],
-      email: userData.email,
-      role: 'candidate' // Keep existing or default to candidate
+  const handleLoginSuccess = async (userData: { email: string }) => {
+    const user = auth.currentUser;
+    if (user) {
+      const userDocRef = doc(db, 'users', user.uid);
+      const userDocSnap = await getDoc(userDocRef);
+
+      if (!userDocSnap.exists()) {
+        const newUser = {
+          email: user.email || userData.email,
+          displayName: user.displayName || user.email?.split('@')[0] || 'Anonymous',
+          createdAt: serverTimestamp(),
+          role: null,
+          onboardingComplete: false,
+        };
+        await setDoc(userDocRef, newUser);
+        setSession({
+          uid: user.uid,
+          name: newUser.displayName,
+          email: newUser.email,
+          role: null,
+        });
+        setCurrentScreen('role-selection');
+      } else {
+        const data = userDocSnap.data();
+        setSession({
+          uid: user.uid,
+          name: data.displayName || user.displayName || 'Anonymous',
+          email: data.email || user.email || '',
+          role: data.role || null,
+        });
+        if (!data.role) {
+          setCurrentScreen('role-selection');
+        } else {
+          setCurrentScreen('dashboard');
+        }
+      }
+    }
+  };
+
+  const handleRoleSelection = async (selectedRole: 'candidate' | 'recruiter') => {
+    if (auth.currentUser) {
+      const userRef = doc(db, 'users', auth.currentUser.uid);
+      await setDoc(userRef, { role: selectedRole, onboardingComplete: true }, { merge: true });
+    }
+    setSession((prev) => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        role: selectedRole
+      };
     });
-    // On login: direct routing straight to dashboard
     setCurrentScreen('dashboard');
   };
 
-  const handleRoleSelection = (selectedRole: 'candidate' | 'recruiter') => {
-    setSession((prev) => ({
-      ...prev,
-      role: selectedRole
-    }));
-    // Proceed to final customized dashboard
-    setCurrentScreen('dashboard');
-  };
-
-  const handleLogout = () => {
-    // Return to landing page style guide for review
+  const handleLogout = async () => {
+    await signOut(auth);
+    setSession(null);
     setCurrentScreen('style-guide');
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-page-gradient flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <svg className="animate-spin h-8 w-8 text-accent-orange" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          <span className="font-manrope text-sm text-text-muted font-semibold">Loading your session...</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen">
@@ -74,7 +192,7 @@ export default function App() {
         />
       )}
 
-      {currentScreen === 'role-selection' && (
+      {currentScreen === 'role-selection' && session && (
         <RoleSelectionScreen
           userData={session}
           onSelectRole={handleRoleSelection}
@@ -82,7 +200,7 @@ export default function App() {
         />
       )}
 
-      {currentScreen === 'dashboard' && (
+      {currentScreen === 'dashboard' && session && session.role && (
         <DashboardScreen
           role={session.role}
           userData={session}
@@ -99,9 +217,21 @@ export default function App() {
             <button
               key={scr}
               onClick={() => {
-                if (scr === 'dashboard' && !session.role) {
-                  // Ensure default role is set if they bypass role-selection
-                  setSession(prev => ({ ...prev, role: 'candidate' }));
+                if (scr === 'dashboard' && (!session || !session.role)) {
+                  // Ensure mock fallback if jumping directly
+                  setSession({
+                    uid: 'mock-uid',
+                    name: 'Demo Builder',
+                    email: 'demo@talentsphere.com',
+                    role: 'candidate',
+                  });
+                } else if (!session) {
+                  setSession({
+                    uid: 'mock-uid',
+                    name: 'Demo Builder',
+                    email: 'demo@talentsphere.com',
+                    role: null,
+                  });
                 }
                 setCurrentScreen(scr);
               }}
@@ -120,3 +250,4 @@ export default function App() {
     </div>
   );
 }
+

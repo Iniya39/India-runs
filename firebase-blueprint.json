@@ -1,0 +1,40 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Represents a registered user profile, tracking their onboarding role and core meta info.",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "description": "User email address matching their Firebase Auth credentials."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Full name of the user."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the profile was generated."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["candidate", "recruiter"],
+          "description": "The workspace setup role. If null, the user has not completed role selection."
+        },
+        "onboardingComplete": {
+          "type": "boolean",
+          "description": "Whether the user completed onboarding steps."
+        }
+      },
+      "required": ["email", "displayName", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Primary user configuration records keyed by Firebase Auth unique UID."
+    }
+  }
+}

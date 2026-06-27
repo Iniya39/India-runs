@@ -1,0 +1,23 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Check if user is authenticated and is the owner of the UID path
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    // Helper to validate user document format
+    function isValidUser(data) {
+      return data.email is string
+        && data.displayName is string
+        && (data.role == null || data.role == 'candidate' || data.role == 'recruiter');
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create, update: if isOwner(userId) && isValidUser(request.resource.data);
+      allow delete: if false;
+    }
+  }
+}
