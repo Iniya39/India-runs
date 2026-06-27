@@ -4,26 +4,23 @@ import {
   Sparkles,
   ArrowRight,
   Briefcase,
-  Users,
-  CheckCircle2,
-  Cpu,
-  Compass,
-  Building,
-  Target
+  User,
+  Check,
+  LogOut
 } from 'lucide-react';
 import { Button } from '../components/Button';
-import { Card } from '../components/Card';
-import { Badge } from '../components/Badge';
 import { BackgroundBlob } from '../components/BackgroundBlobs';
 
 export interface RoleSelectionScreenProps {
   onSelectRole: (role: 'candidate' | 'recruiter') => void;
+  onLogout?: () => void;
   userData?: { name?: string; email?: string };
 }
 
 export const RoleSelectionScreen: React.FC<RoleSelectionScreenProps> = ({
   onSelectRole,
-  userData = { name: 'Alex' },
+  onLogout,
+  userData = { name: 'Builder' },
 }) => {
   const [selectedRole, setSelectedRole] = useState<'candidate' | 'recruiter' | null>(null);
 
@@ -33,201 +30,221 @@ export const RoleSelectionScreen: React.FC<RoleSelectionScreenProps> = ({
     }
   };
 
-  const candidateBenefits = [
-    'Create an anonymous candidate profile',
-    'Get direct inbound pitches from vetted teams',
-    'Salary transparency on every offer',
-    'Bypass traditional recruiter resume screens'
+  const candidateBullets = [
+    'AI-matched job recommendations',
+    'Showcase verified skills & projects',
+    'Get discovered through reverse hiring'
   ];
 
-  const recruiterBenefits = [
-    'Direct outreach to pre-vetted active builders',
-    'Pitch candidates directly with salary upfront',
-    '85% response rate with smart AI match suggestions',
-    'Streamlined pipeline with automated scheduling'
+  const recruiterBullets = [
+    'AI-ranked candidate shortlists',
+    'Deep semantic job matching',
+    'Ask AI anything about a candidate'
   ];
 
   return (
-    <div className="min-h-screen bg-page-gradient py-12 px-4 sm:px-6 lg:px-8 relative overflow-hidden flex flex-col justify-between">
+    <div className="min-h-screen bg-page-gradient py-12 px-4 sm:px-6 lg:px-8 relative overflow-hidden flex flex-col justify-between font-manrope">
       
       {/* Background Decorative Accents */}
-      <BackgroundBlob size="xl" className="-top-20 right-0 opacity-12" />
-      <BackgroundBlob size="lg" className="-bottom-10 left-10 from-accent-purple via-brand-middle to-brand-start opacity-10" />
+      <BackgroundBlob size="xl" className="-top-40 -right-20 opacity-8" />
+      <BackgroundBlob size="lg" className="-bottom-20 -left-20 from-accent-purple via-brand-middle to-brand-start opacity-8" />
 
-      {/* Top Brand bar */}
-      <div className="max-w-7xl mx-auto w-full flex justify-between items-center relative z-10">
+      {/* Top Bar with optional Logout */}
+      <div className="max-w-5xl mx-auto w-full flex justify-between items-center relative z-10 pb-6 border-b border-border-warm/20">
         <div className="flex items-center gap-2">
-          <div className="w-9 h-9 rounded-xl bg-brand-gradient flex items-center justify-center text-white shadow-warm-md">
-            <Sparkles className="w-4.5 h-4.5" />
+          <div className="w-8 h-8 rounded-lg bg-brand-gradient flex items-center justify-center text-white shadow-warm-sm">
+            <Sparkles className="w-4 h-4" />
           </div>
-          <span className="font-sora font-extrabold text-lg tracking-tight text-text-navy">
+          <span className="font-sora font-extrabold text-base tracking-tight text-text-navy">
             Talent<span className="text-gradient">Sphere</span>
           </span>
         </div>
-        <Badge text="Step 2 of 3: Setup Role" variant="gradient" />
+        
+        {onLogout && (
+          <button
+            onClick={onLogout}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full border border-border-warm text-xs font-semibold text-text-muted bg-white/70 hover:bg-white hover:text-red-500 hover:border-red-200 transition-all cursor-pointer"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            Sign out
+          </button>
+        )}
       </div>
 
-      {/* Main Content Box */}
-      <div className="max-w-4xl mx-auto w-full relative z-10 my-auto py-8">
+      {/* Centered Single-Column Main Content Container */}
+      <div className="max-w-4xl mx-auto w-full relative z-10 py-12 my-auto flex flex-col justify-center items-center">
         
-        {/* Welcome Callout */}
-        <div className="text-center mb-10">
+        {/* Header Section */}
+        <div className="text-center max-w-2xl mb-12">
           <motion.div
-            initial={{ scale: 0.95, opacity: 0 }}
+            initial={{ scale: 0.96, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            transition={{ type: 'spring', duration: 0.5 }}
+            transition={{ type: 'spring', duration: 0.6 }}
           >
-            <h2 className="font-sora text-3xl sm:text-4xl md:text-5xl font-extrabold text-text-navy tracking-tight">
-              Welcome, <span className="text-gradient">{userData.name || 'Builder'}</span>!
-            </h2>
-            <p className="font-manrope text-sm sm:text-base text-text-muted mt-3 max-w-xl mx-auto leading-relaxed">
-              Let's tailor your TalentSphere workspace. How do you intend to use the AI matchmaker platform?
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-accent-orange/10 text-accent-orange font-semibold text-xs mb-4 border border-accent-orange/15 shadow-warm-sm">
+              <Sparkles className="w-3.5 h-3.5" />
+              Onboarding Workspace Setup
+            </div>
+            <h1 className="font-sora text-3xl sm:text-4xl md:text-5xl font-extrabold text-text-navy tracking-tight leading-tight">
+              How do you want to use <span className="text-gradient">TalentSphere</span>?
+            </h1>
+            <p className="font-manrope text-sm sm:text-base text-text-muted mt-4 max-w-xl mx-auto leading-relaxed">
+              This helps us tailor your experience. <span className="font-bold text-text-navy">You can't change this later</span>, so choose carefully.
             </p>
           </motion.div>
         </div>
 
-        {/* Option Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
+        {/* Side-by-Side Selection Cards (stacks on mobile) */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 w-full mb-12">
           
-          {/* Candidate Card */}
+          {/* Candidate Option Card */}
           <motion.div
-            whileHover={{ y: -5 }}
-            transition={{ type: 'spring', stiffness: 300, damping: 20 }}
+            whileHover={{ scale: 1.02, y: -4 }}
+            whileTap={{ scale: 0.98 }}
+            transition={{ type: 'spring', stiffness: 350, damping: 25 }}
             onClick={() => setSelectedRole('candidate')}
-            className="cursor-pointer"
+            className="cursor-pointer h-full"
+            id="role-candidate-card"
           >
             <div 
-              className={`h-full rounded-2xl p-6 sm:p-8 bg-white border-2 transition-all flex flex-col justify-between ${
-                selectedRole === 'candidate'
-                  ? 'border-accent-orange shadow-warm-xl ring-2 ring-accent-orange/10'
-                  : 'border-border-warm hover:border-accent-orange/40 shadow-warm-md'
+              className={`relative rounded-2xl transition-all duration-300 h-full p-[2px] ${
+                selectedRole === 'candidate' 
+                  ? 'bg-brand-gradient shadow-warm-xl' 
+                  : 'bg-transparent border-2 border-border-warm hover:border-accent-orange/40 hover:shadow-warm-md'
               }`}
             >
-              <div>
-                {/* Header with Icon */}
-                <div className="flex justify-between items-start mb-6">
-                  <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-white transition-all ${
-                    selectedRole === 'candidate' ? 'bg-accent-orange shadow-warm-md' : 'bg-border-warm text-text-muted'
-                  }`}>
-                    <Compass className="w-7 h-7" />
+              <div className="h-full bg-white rounded-[14px] p-8 flex flex-col justify-between">
+                <div>
+                  {/* Badge with Icon */}
+                  <div className="flex justify-between items-center mb-6">
+                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-white bg-brand-gradient shadow-warm-sm`}>
+                      <User className="w-6 h-6" />
+                    </div>
+                    {selectedRole === 'candidate' && (
+                      <span className="text-xs font-bold text-accent-orange bg-accent-orange/10 border border-accent-orange/15 px-3 py-1 rounded-full">
+                        Selected Role
+                      </span>
+                    )}
                   </div>
-                  {selectedRole === 'candidate' && (
-                    <Badge text="Selected" variant="gradient" />
-                  )}
+
+                  <h3 className="font-sora text-xl font-extrabold text-text-navy mb-2">
+                    I'm looking for jobs
+                  </h3>
+                  <p className="font-manrope text-sm text-text-muted leading-relaxed mb-6">
+                    Build your profile, get discovered by top companies, and find roles that actually fit you.
+                  </p>
+
+                  {/* Bullet Benefits List */}
+                  <ul className="space-y-3.5 font-manrope">
+                    {candidateBullets.map((bullet, i) => (
+                      <li key={i} className="flex items-start gap-2.5 text-sm text-text-muted">
+                        <div className={`w-5 h-5 rounded-full flex items-center justify-center mt-0.5 flex-shrink-0 bg-accent-orange/10 text-accent-orange`}>
+                          <Check className="w-3 h-3 stroke-[3px]" />
+                        </div>
+                        <span className="text-text-navy/90">{bullet}</span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
 
-                <h3 className="font-sora text-xl font-bold text-text-navy mb-2">
-                  I'm a Candidate
-                </h3>
-                <p className="font-manrope text-xs sm:text-sm text-text-muted leading-relaxed mb-6">
-                  I want to discover premium technology roles anonymously, bypass generic applications, and receive company pitches.
-                </p>
-
-                {/* Benefits List */}
-                <ul className="space-y-3 font-manrope">
-                  {candidateBenefits.map((benefit, i) => (
-                    <li key={i} className="flex items-start gap-2 text-xs sm:text-sm text-text-muted">
-                      <CheckCircle2 className={`w-4 h-4 mt-0.5 flex-shrink-0 ${
-                        selectedRole === 'candidate' ? 'text-accent-orange' : 'text-border-warm'
-                      }`} />
-                      <span>{benefit}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              {/* Bottom tag */}
-              <div className="mt-8 pt-4 border-t border-border-warm/50 flex justify-between items-center">
-                <span className="text-xs font-semibold text-text-muted">Anonymity Guaranteed</span>
-                <span className={`text-xs font-bold ${
-                  selectedRole === 'candidate' ? 'text-accent-orange' : 'text-text-muted'
-                }`}>Explore Roles</span>
+                <div className="mt-8 pt-4 border-t border-border-warm/50 flex justify-between items-center text-xs font-semibold text-text-muted">
+                  <span>Candidate Space</span>
+                  <span className={selectedRole === 'candidate' ? 'text-accent-orange font-bold' : ''}>
+                    Reverse Hiring
+                  </span>
+                </div>
               </div>
             </div>
           </motion.div>
 
-          {/* Recruiter Card */}
+          {/* Recruiter Option Card */}
           <motion.div
-            whileHover={{ y: -5 }}
-            transition={{ type: 'spring', stiffness: 300, damping: 20 }}
+            whileHover={{ scale: 1.02, y: -4 }}
+            whileTap={{ scale: 0.98 }}
+            transition={{ type: 'spring', stiffness: 350, damping: 25 }}
             onClick={() => setSelectedRole('recruiter')}
-            className="cursor-pointer"
+            className="cursor-pointer h-full"
+            id="role-recruiter-card"
           >
             <div 
-              className={`h-full rounded-2xl p-6 sm:p-8 bg-white border-2 transition-all flex flex-col justify-between ${
-                selectedRole === 'recruiter'
-                  ? 'border-accent-purple shadow-warm-xl ring-2 ring-accent-purple/10'
-                  : 'border-border-warm hover:border-accent-purple/40 shadow-warm-md'
+              className={`relative rounded-2xl transition-all duration-300 h-full p-[2px] ${
+                selectedRole === 'recruiter' 
+                  ? 'bg-brand-gradient shadow-warm-xl' 
+                  : 'bg-transparent border-2 border-border-warm hover:border-accent-purple/40 hover:shadow-warm-md'
               }`}
             >
-              <div>
-                {/* Header with Icon */}
-                <div className="flex justify-between items-start mb-6">
-                  <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-white transition-all ${
-                    selectedRole === 'recruiter' ? 'bg-accent-purple shadow-warm-md' : 'bg-border-warm text-text-muted'
-                  }`}>
-                    <Building className="w-7 h-7" />
+              <div className="h-full bg-white rounded-[14px] p-8 flex flex-col justify-between">
+                <div>
+                  {/* Badge with Icon */}
+                  <div className="flex justify-between items-center mb-6">
+                    <div className="w-12 h-12 rounded-xl flex items-center justify-center text-white bg-brand-gradient shadow-warm-sm">
+                      <Briefcase className="w-6 h-6" />
+                    </div>
+                    {selectedRole === 'recruiter' && (
+                      <span className="text-xs font-bold text-accent-purple bg-accent-purple/10 border border-accent-purple/15 px-3 py-1 rounded-full">
+                        Selected Role
+                      </span>
+                    )}
                   </div>
-                  {selectedRole === 'recruiter' && (
-                    <Badge text="Selected" variant="purple" />
-                  )}
+
+                  <h3 className="font-sora text-xl font-extrabold text-text-navy mb-2">
+                    I'm hiring talent
+                  </h3>
+                  <p className="font-manrope text-sm text-text-muted leading-relaxed mb-6">
+                    Post roles, get an intelligently ranked shortlist, and skip the keyword guesswork.
+                  </p>
+
+                  {/* Bullet Benefits List */}
+                  <ul className="space-y-3.5 font-manrope">
+                    {recruiterBullets.map((bullet, i) => (
+                      <li key={i} className="flex items-start gap-2.5 text-sm text-text-muted">
+                        <div className="w-5 h-5 rounded-full flex items-center justify-center mt-0.5 flex-shrink-0 bg-accent-purple/10 text-accent-purple">
+                          <Check className="w-3 h-3 stroke-[3px]" />
+                        </div>
+                        <span className="text-text-navy/90">{bullet}</span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
 
-                <h3 className="font-sora text-xl font-bold text-text-navy mb-2">
-                  I'm Hiring
-                </h3>
-                <p className="font-manrope text-xs sm:text-sm text-text-muted leading-relaxed mb-6">
-                  I want to build highly efficient engineering teams, pitch top candidates transparently, and use AI matchmaking filters.
-                </p>
-
-                {/* Benefits List */}
-                <ul className="space-y-3 font-manrope">
-                  {recruiterBenefits.map((benefit, i) => (
-                    <li key={i} className="flex items-start gap-2 text-xs sm:text-sm text-text-muted">
-                      <CheckCircle2 className={`w-4 h-4 mt-0.5 flex-shrink-0 ${
-                        selectedRole === 'recruiter' ? 'text-accent-purple' : 'text-border-warm'
-                      }`} />
-                      <span>{benefit}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              {/* Bottom tag */}
-              <div className="mt-8 pt-4 border-t border-border-warm/50 flex justify-between items-center">
-                <span className="text-xs font-semibold text-text-muted">Direct Team Pitching</span>
-                <span className={`text-xs font-bold ${
-                  selectedRole === 'recruiter' ? 'text-accent-purple' : 'text-text-muted'
-                }`}>Hire Top Talents</span>
+                <div className="mt-8 pt-4 border-t border-border-warm/50 flex justify-between items-center text-xs font-semibold text-text-muted">
+                  <span>Employer Console</span>
+                  <span className={selectedRole === 'recruiter' ? 'text-accent-purple font-bold' : ''}>
+                    Semantic Search
+                  </span>
+                </div>
               </div>
             </div>
           </motion.div>
 
         </div>
 
-        {/* Action Button */}
-        <div className="text-center">
+        {/* Action Call-to-Button */}
+        <div className="text-center w-full max-w-sm">
           <Button
             variant="primary"
             disabled={!selectedRole}
             onClick={handleContinue}
-            className={`mx-auto min-w-56 py-3.5 font-bold shadow-warm-md transition-all ${
-              selectedRole === 'recruiter' ? 'bg-brand-gradient brightness-105' : ''
+            className={`w-full py-4 font-bold shadow-warm-md transition-all text-base rounded-full ${
+              !selectedRole 
+                ? 'opacity-50 cursor-not-allowed bg-text-muted/20 text-text-muted border border-border-warm' 
+                : 'hover:scale-105 active:scale-95'
             }`}
+            id="role-continue-button"
           >
-            Continue workspace setup
-            <ArrowRight className="w-4 h-4" />
+            Continue setup
+            <ArrowRight className="w-5 h-5" />
           </Button>
           <p className="text-xs text-text-muted font-manrope mt-3">
-            You can modify your role selection settings anytime inside your user preferences dashboard.
+            Clicking Continue registers your selected role. You cannot swap workspaces later.
           </p>
         </div>
 
       </div>
 
-      {/* Footer bar */}
-      <div className="max-w-7xl mx-auto w-full text-center relative z-10 text-xs text-text-muted/60 font-manrope pt-4 border-t border-border-warm/30">
-        Secure tokenized onboarding verified. TalentSphere Workspace © 2026.
+      {/* Bottom Legal bar */}
+      <div className="max-w-5xl mx-auto w-full text-center relative z-10 text-xs text-text-muted/60 font-manrope pt-4 border-t border-border-warm/20">
+        Secure onboarding token verified. TalentSphere © 2026. All rights reserved.
       </div>
 
     </div>
