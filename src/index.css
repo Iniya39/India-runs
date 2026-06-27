@@ -1,0 +1,61 @@
+@import "tailwindcss";
+
+@theme {
+  /* Colors */
+  --color-brand-start: #FF6B4A;
+  --color-brand-middle: #FF4D6D;
+  --color-brand-end: #8B5CF6;
+  
+  --color-bg-start: #FFF3EB;
+  --color-bg-end: #FFE8DC;
+  --color-surface: #FFFBF8;
+  
+  --color-text-navy: #1A1A2E;
+  --color-text-muted: #6B7280;
+  
+  --color-accent-orange: #FF5A36;
+  --color-accent-purple: #7C3AED;
+  --color-border-warm: #F0E4DA;
+  --color-success-green: #16A34A;
+
+  /* Typography */
+  --font-sans: "Sora", "Manrope", system-ui, -apple-system, sans-serif;
+  --font-sora: "Sora", sans-serif;
+  --font-manrope: "Manrope", sans-serif;
+
+  /* Warm Custom Shadows */
+  --shadow-warm-sm: 0 2px 8px rgba(255, 90, 54, 0.04), 0 1px 3px rgba(255, 90, 54, 0.02);
+  --shadow-warm-md: 0 8px 16px rgba(255, 90, 54, 0.06), 0 4px 6px rgba(255, 90, 54, 0.03);
+  --shadow-warm-lg: 0 16px 32px rgba(255, 90, 54, 0.08), 0 6px 12px rgba(255, 90, 54, 0.04);
+  --shadow-warm-xl: 0 24px 48px rgba(255, 90, 54, 0.12), 0 12px 24px rgba(255, 90, 54, 0.06);
+}
+
+@layer utilities {
+  .text-gradient {
+    background: linear-gradient(135deg, #FF6B4A 0%, #FF4D6D 50%, #8B5CF6 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .bg-brand-gradient {
+    background: linear-gradient(135deg, #FF6B4A 0%, #FF4D6D 50%, #8B5CF6 100%);
+  }
+
+  .bg-page-gradient {
+    background: linear-gradient(180deg, #FFF3EB 0%, #FFE8DC 100%);
+  }
+
+  .border-gradient-active {
+    border-image: linear-gradient(135deg, #FF6B4A, #8B5CF6) 1;
+  }
+}
+
+/* Custom Base Styling */
+body {
+  font-family: var(--font-sans);
+  color: var(--color-text-navy);
+  background-color: var(--color-bg-start);
+  background-image: linear-gradient(180deg, var(--color-bg-start) 0%, var(--color-bg-end) 100%);
+  min-height: 100vh;
+}
