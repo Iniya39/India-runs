@@ -78,6 +78,7 @@ export default function App() {
         <RoleSelectionScreen
           userData={session}
           onSelectRole={handleRoleSelection}
+          onLogout={handleLogout}
         />
       )}
 
