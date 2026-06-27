@@ -21,6 +21,16 @@ import { Card } from '../components/Card';
 import { FloatingInfoCard } from '../components/FloatingInfoCard';
 import { BackgroundBlob } from '../components/BackgroundBlobs';
 
+// Firebase Auth modular imports
+import { 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  updateProfile, 
+  signInWithPopup, 
+  GoogleAuthProvider 
+} from 'firebase/auth';
+import { auth } from '../firebase';
+
 export interface AuthScreenProps {
   onSuccessSignup: (userData: { name: string; email: string }) => void;
   onSuccessLogin: (userData: { email: string }) => void;
@@ -187,7 +197,24 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     return allValid;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const mapAuthErrorToMessage = (code: string): string => {
+    switch (code) {
+      case 'auth/email-already-in-use':
+        return 'An account with this email already exists.';
+      case 'auth/invalid-credential':
+      case 'auth/wrong-password':
+      case 'auth/user-not-found':
+        return 'Invalid email or password.';
+      case 'auth/weak-password':
+        return 'Password must be at least 8 characters.';
+      case 'auth/too-many-requests':
+        return 'Too many attempts. Please try again later.';
+      default:
+        return 'An error occurred during authentication. Please try again.';
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBannerError(null);
 
@@ -197,22 +224,25 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
     setIsSubmitting(true);
 
-    // Simulate authenticating
-    setTimeout(() => {
-      setIsSubmitting(false);
-      
-      // Let's build mock logic: if user enters "error@talentsphere.com", trigger a mock failure
-      if (formData.email.toLowerCase() === 'error@talentsphere.com') {
-        setBannerError('Invalid email or password. Please try again with different credentials.');
-        return;
-      }
-
+    try {
       if (isLogin) {
-        onSuccessLogin({ email: formData.email });
+        // Real Firebase Auth Login
+        const userCredential = await signInWithEmailAndPassword(auth, formData.email, formData.password);
+        onSuccessLogin({ email: userCredential.user.email || formData.email });
       } else {
+        // Real Firebase Auth Signup
+        const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
+        await updateProfile(userCredential.user, {
+          displayName: formData.name,
+        });
         onSuccessSignup({ name: formData.name, email: formData.email });
       }
-    }, 1800);
+    } catch (err: any) {
+      console.error('Auth error:', err);
+      setBannerError(mapAuthErrorToMessage(err.code || err.message));
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const toggleAuthMode = () => {
@@ -529,10 +559,23 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
           <div className="grid grid-cols-2 gap-3.5">
             <Button
               variant="secondary"
-              onClick={() => {
-                setFormData({ ...formData, email: 'demo@talentsphere.com', password: 'password123' });
-                setBannerError('Auto-filled demo@talentsphere.com / password123. Click Log in to proceed!');
+              onClick={async () => {
+                setBannerError(null);
+                setIsSubmitting(true);
+                try {
+                  const provider = new GoogleAuthProvider();
+                  const userCredential = await signInWithPopup(auth, provider);
+                  onSuccessLogin({ email: userCredential.user.email || '' });
+                } catch (err: any) {
+                  console.error('Google auth error:', err);
+                  if (err.code !== 'auth/popup-closed-by-user') {
+                    setBannerError(mapAuthErrorToMessage(err.code || err.message));
+                  }
+                } finally {
+                  setIsSubmitting(false);
+                }
               }}
+              disabled={isSubmitting}
               className="py-2.5 font-semibold text-xs flex items-center justify-center gap-2 bg-white"
             >
               {/* Simple Google SVG Icon */}
@@ -547,11 +590,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             
             <Button
               variant="secondary"
-              onClick={() => {
-                setFormData({ ...formData, email: 'error@talentsphere.com', password: 'password123' });
-                setBannerError('Auto-filled error@talentsphere.com / password123 to simulate an authentication failure.');
-              }}
-              className="py-2.5 font-semibold text-xs flex items-center justify-center gap-2 bg-white"
+              disabled={true}
+              className="py-2.5 font-semibold text-xs flex items-center justify-center gap-2 bg-white opacity-50 cursor-not-allowed"
             >
               {/* Simple LinkedIn SVG Icon */}
               <svg className="w-4 h-4 flex-shrink-0 fill-[#0077B5]" viewBox="0 0 24 24">
