@@ -32,6 +32,7 @@ export interface DashboardScreenProps {
   userData: { name?: string; email: string };
   onLogout: () => void;
   onNavigateToStyleGuide?: () => void;
+  onEditProfile?: () => void;
 }
 
 export const DashboardScreen: React.FC<DashboardScreenProps> = ({
@@ -39,6 +40,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   userData,
   onLogout,
   onNavigateToStyleGuide,
+  onEditProfile,
 }) => {
   const isCandidate = role === 'candidate';
 
@@ -179,7 +181,15 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               <SlidersHorizontal className="w-3.5 h-3.5" />
               Filter parameters
             </Button>
-            <Button variant="primary" className="px-4 py-2 text-xs shadow-warm-sm">
+            <Button 
+              variant="primary" 
+              className="px-4 py-2 text-xs shadow-warm-sm"
+              onClick={() => {
+                if (isCandidate && onEditProfile) {
+                  onEditProfile();
+                }
+              }}
+            >
               <Plus className="w-3.5 h-3.5" />
               {isCandidate ? 'Optimize Profile' : 'Create job pitch'}
             </Button>

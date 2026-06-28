@@ -12,9 +12,8 @@ import {
 import { Button } from '../components/Button';
 import { BackgroundBlob } from '../components/BackgroundBlobs';
 
-// Firebase Auth & Firestore imports
-import { auth, db } from '../firebase';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+// Firebase Auth & Firestore imports (routed through our fallback proxy)
+import { auth, db, doc, getDoc, updateDoc } from '../firebase';
 
 export interface RoleSelectionScreenProps {
   onSelectRole: (role: 'candidate' | 'recruiter') => void;

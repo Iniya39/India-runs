@@ -3,13 +3,23 @@ import { StyleGuide } from './screens/StyleGuide';
 import { AuthScreen } from './screens/AuthScreen';
 import { RoleSelectionScreen } from './screens/RoleSelectionScreen';
 import { DashboardScreen } from './screens/DashboardScreen';
+import { CandidateProfileBuilderScreen } from './screens/CandidateProfileBuilderScreen';
+import { RecruiterCompanySetupScreen } from './screens/RecruiterCompanySetupScreen';
 
-// Firebase Auth & Firestore imports
-import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { auth, db } from './firebase';
+// Firebase Auth & Firestore imports (routed through our fallback proxy)
+import { 
+  auth, 
+  db, 
+  onAuthStateChanged, 
+  signOut, 
+  doc, 
+  getDoc, 
+  setDoc, 
+  serverTimestamp,
+  isDemoMode
+} from './firebase';
 
-type ScreenName = 'style-guide' | 'auth' | 'role-selection' | 'dashboard';
+type ScreenName = 'style-guide' | 'auth' | 'role-selection' | 'candidate-profile-builder' | 'recruiter-company-setup' | 'dashboard';
 
 interface UserSession {
   uid: string;
@@ -62,6 +72,12 @@ export default function App() {
 
             if (!data.role) {
               setCurrentScreen('role-selection');
+            } else if (!data.onboardingComplete) {
+              if (data.role === 'candidate') {
+                setCurrentScreen('candidate-profile-builder');
+              } else {
+                setCurrentScreen('recruiter-company-setup');
+              }
             } else {
               setCurrentScreen('dashboard');
             }
@@ -134,6 +150,12 @@ export default function App() {
         });
         if (!data.role) {
           setCurrentScreen('role-selection');
+        } else if (!data.onboardingComplete) {
+          if (data.role === 'candidate') {
+            setCurrentScreen('candidate-profile-builder');
+          } else {
+            setCurrentScreen('recruiter-company-setup');
+          }
         } else {
           setCurrentScreen('dashboard');
         }
@@ -144,7 +166,7 @@ export default function App() {
   const handleRoleSelection = async (selectedRole: 'candidate' | 'recruiter') => {
     if (auth.currentUser) {
       const userRef = doc(db, 'users', auth.currentUser.uid);
-      await setDoc(userRef, { role: selectedRole, onboardingComplete: true }, { merge: true });
+      await setDoc(userRef, { role: selectedRole, onboardingComplete: false }, { merge: true });
     }
     setSession((prev) => {
       if (!prev) return null;
@@ -153,7 +175,12 @@ export default function App() {
         role: selectedRole
       };
     });
-    setCurrentScreen('dashboard');
+
+    if (selectedRole === 'candidate') {
+      setCurrentScreen('candidate-profile-builder');
+    } else {
+      setCurrentScreen('recruiter-company-setup');
+    }
   };
 
   const handleLogout = async () => {
@@ -178,6 +205,12 @@ export default function App() {
 
   return (
     <div className="min-h-screen">
+      {isDemoMode && (
+        <div className="bg-[#FFF3CD] border-b border-[#FFEBAA] text-[#856404] px-4 py-2 text-center text-xs font-manrope font-semibold flex items-center justify-center gap-1.5 relative z-50">
+          <span className="inline-flex items-center justify-center w-2 h-2 rounded-full bg-[#856404] animate-pulse" />
+          Running in Demo Mode (Local Persistent Storage). To sync with Firestore cloud, connect a Firebase project via the Settings tab.
+        </div>
+      )}
       
       {/* Dynamic Screen Routing Coordinator */}
       {currentScreen === 'style-guide' && (
@@ -200,12 +233,53 @@ export default function App() {
         />
       )}
 
+      {currentScreen === 'candidate-profile-builder' && session && (
+        <CandidateProfileBuilderScreen
+          userDisplayName={session.name}
+          onComplete={async (data) => {
+            if (auth.currentUser) {
+              const userRef = doc(db, 'users', auth.currentUser.uid);
+              await setDoc(userRef, { onboardingComplete: true }, { merge: true });
+            }
+            setCurrentScreen('dashboard');
+          }}
+          onSaveAndExit={(data) => {
+            setCurrentScreen('dashboard');
+          }}
+        />
+      )}
+
+      {currentScreen === 'recruiter-company-setup' && session && (
+        <RecruiterCompanySetupScreen
+          onComplete={async (data) => {
+            if (auth.currentUser) {
+              const userRef = doc(db, 'users', auth.currentUser.uid);
+              await setDoc(userRef, { 
+                onboardingComplete: true,
+                companyProfile: data 
+              }, { merge: true });
+            }
+            setCurrentScreen('dashboard');
+          }}
+          onSaveAndExit={async (data) => {
+            if (auth.currentUser) {
+              const userRef = doc(db, 'users', auth.currentUser.uid);
+              await setDoc(userRef, { 
+                companyProfile: data 
+              }, { merge: true });
+            }
+            setCurrentScreen('dashboard');
+          }}
+        />
+      )}
+
       {currentScreen === 'dashboard' && session && session.role && (
         <DashboardScreen
           role={session.role}
           userData={session}
           onLogout={handleLogout}
           onNavigateToStyleGuide={() => setCurrentScreen('style-guide')}
+          onEditProfile={() => setCurrentScreen('candidate-profile-builder')}
         />
       )}
 
@@ -213,7 +287,7 @@ export default function App() {
       <div className="fixed bottom-3 right-3 z-50 bg-white/90 backdrop-blur-md border border-border-warm rounded-full px-3 py-1.5 shadow-warm-lg flex items-center gap-2">
         <span className="text-[10px] font-bold text-text-navy font-mono uppercase">Quick Jump:</span>
         <div className="flex gap-1.5">
-          {(['style-guide', 'auth', 'role-selection', 'dashboard'] as const).map((scr) => (
+          {(['style-guide', 'auth', 'role-selection', 'candidate-profile-builder', 'recruiter-company-setup', 'dashboard'] as const).map((scr) => (
             <button
               key={scr}
               onClick={() => {
@@ -224,6 +298,20 @@ export default function App() {
                     name: 'Demo Builder',
                     email: 'demo@talentsphere.com',
                     role: 'candidate',
+                  });
+                } else if (scr === 'candidate-profile-builder' && !session) {
+                  setSession({
+                    uid: 'mock-uid',
+                    name: 'Demo Builder',
+                    email: 'demo@talentsphere.com',
+                    role: 'candidate',
+                  });
+                } else if (scr === 'recruiter-company-setup' && !session) {
+                  setSession({
+                    uid: 'mock-uid',
+                    name: 'Demo Recruiter',
+                    email: 'recruiter@talentsphere.com',
+                    role: 'recruiter',
                   });
                 } else if (!session) {
                   setSession({
@@ -241,7 +329,7 @@ export default function App() {
                   : 'bg-border-warm/40 text-text-muted hover:text-text-navy hover:bg-border-warm/70'
               }`}
             >
-              {scr.replace('-', ' ')}
+              {scr.replace(/-/g, ' ')}
             </button>
           ))}
         </div>

@@ -21,15 +21,15 @@ import { Card } from '../components/Card';
 import { FloatingInfoCard } from '../components/FloatingInfoCard';
 import { BackgroundBlob } from '../components/BackgroundBlobs';
 
-// Firebase Auth modular imports
+// Firebase Auth modular imports (routed through our fallback proxy)
 import { 
+  auth,
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
   updateProfile, 
   signInWithPopup, 
   GoogleAuthProvider 
-} from 'firebase/auth';
-import { auth } from '../firebase';
+} from '../firebase';
 
 export interface AuthScreenProps {
   onSuccessSignup: (userData: { name: string; email: string }) => void;
