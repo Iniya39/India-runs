@@ -13,7 +13,7 @@ import { Button } from '../components/Button';
 import { BackgroundBlob } from '../components/BackgroundBlobs';
 
 // Firebase Auth & Firestore imports (routed through our fallback proxy)
-import { auth, db, doc, getDoc, updateDoc } from '../firebase';
+import { auth, db, doc, getDoc, updateDoc } from '../supabase';
 
 export interface RoleSelectionScreenProps {
   onSelectRole: (role: 'candidate' | 'recruiter') => void;

@@ -10,7 +10,7 @@ import {
   orderBy, 
   serverTimestamp,
   db
-} from '../firebase';
+} from '../supabase';
 import { 
   Send, 
   Lock, 

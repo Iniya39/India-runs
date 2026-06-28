@@ -27,7 +27,7 @@ import { FloatingInfoCard } from '../components/FloatingInfoCard';
 import { NavBar, NavLinkItem } from '../components/NavBar';
 import { PrivateChat } from '../components/PrivateChat';
 import { JobDetailScreen } from './JobDetailScreen';
-import { getCandidateUid, syncApplicationState } from '../lib/chatUtils';
+import { syncApplicationState } from '../lib/chatUtils';
 import { 
   db, 
   auth, 
@@ -42,7 +42,7 @@ import {
   onSnapshot,
   query,
   where
-} from '../firebase';
+} from '../supabase';
 
 export interface JobMatch {
   id: string;
@@ -71,139 +71,6 @@ interface CandidateHomeScreenProps {
   onLogout: () => void;
   onNavigateToProfile: () => void;
 }
-
-// Comprehensive high-quality default matches if Firestore is empty initially
-const DEFAULT_JOBS: JobMatch[] = [
-  {
-    id: 'job-1',
-    title: 'Staff React Engineer',
-    companyName: 'Quantum Dynamics',
-    logoBg: 'bg-indigo-600',
-    logoText: 'QD',
-    industry: 'Technology',
-    companySize: '51-200',
-    location: 'SF / Remote',
-    jobType: 'Full-time',
-    experienceLevel: 'Senior',
-    salary: '$195,000 - $220,000',
-    matchScore: 98,
-    tags: ['React 19', 'Next.js', 'Distributed Systems'],
-    description: 'Lead front-end scaling efforts for our next-generation visual automation designer. Build responsive component systems that sync in real-time across users.',
-    pitch: "Hey Alex, we saw your design work. We're launching our new AI workspace next month and would love for you to lead the architecture.",
-    postedDate: 'Today',
-    isReverseRecruitment: true
-  },
-  {
-    id: 'job-2',
-    title: 'Senior Front-End Architect',
-    companyName: 'Aether Flow',
-    logoBg: 'bg-emerald-600',
-    logoText: 'AF',
-    industry: 'Finance',
-    companySize: '11-50',
-    location: 'Fully Remote',
-    jobType: 'Full-time',
-    experienceLevel: 'Senior',
-    salary: '$180,000 - $205,000',
-    matchScore: 94,
-    tags: ['Tailwind v4', 'Vite', 'TypeScript'],
-    description: 'Architect a blisteringly fast multi-tenant dashboard system. Focus heavily on layout animations, rendering efficiency, and flawless visual typography.',
-    pitch: "Our team focuses entirely on fast web interactions. Your experience with motion and custom canvases is exactly what we need.",
-    postedDate: '2 days ago',
-    isReverseRecruitment: true
-  },
-  {
-    id: 'job-3',
-    title: 'Product Engineer (AI Systems)',
-    companyName: 'Lumina Cloud',
-    logoBg: 'bg-amber-500',
-    logoText: 'LC',
-    industry: 'Technology',
-    companySize: '1-10',
-    location: 'Austin, TX',
-    jobType: 'Full-time',
-    experienceLevel: 'Senior',
-    salary: '$160,000 - $190,000',
-    matchScore: 89,
-    tags: ['Next.js', 'Generative AI', 'PostgreSQL'],
-    description: 'Integrate multi-modal LLM features directly into the core workflow interface. Work closely with product designers to map raw models to delightful user tools.',
-    pitch: "We love your full-stack experiments on GitHub! Your project on visual AI reasoning pipelines fits our technical map perfectly.",
-    postedDate: '3 days ago',
-    isReverseRecruitment: true
-  },
-  {
-    id: 'job-4',
-    title: 'Senior UI/UX Engineer',
-    companyName: 'Stellar AI',
-    logoBg: 'bg-purple-600',
-    logoText: 'SA',
-    industry: 'Technology',
-    companySize: '51-200',
-    location: 'SF / Remote',
-    jobType: 'Full-time',
-    experienceLevel: 'Senior',
-    salary: '$150,000 - $180,000',
-    matchScore: 92,
-    tags: ['React', 'Framer Motion', 'Tailwind'],
-    description: 'Craft stunning, highly interactive dashboards and visual representations of machine learning data. Refine fluid transitions and micro-animations.',
-    postedDate: '1 day ago',
-    isReverseRecruitment: false
-  },
-  {
-    id: 'job-5',
-    title: 'Full-Stack Developer',
-    companyName: 'Helix Tech',
-    logoBg: 'bg-blue-600',
-    logoText: 'HT',
-    industry: 'Healthcare',
-    companySize: '11-50',
-    location: 'Fully Remote',
-    jobType: 'Contract',
-    experienceLevel: 'Mid-level',
-    salary: '$90 - $115 / hr',
-    matchScore: 85,
-    tags: ['React', 'Node.js', 'Firebase'],
-    description: 'Support patient intake dashboard scaling and integrate electronic records with standard web services securely.',
-    postedDate: '4 days ago',
-    isReverseRecruitment: false
-  },
-  {
-    id: 'job-6',
-    title: 'Mobile App Specialist',
-    companyName: 'Orbit Mobile',
-    logoBg: 'bg-rose-500',
-    logoText: 'OM',
-    industry: 'Entertainment',
-    companySize: '11-50',
-    location: 'New York, NY',
-    jobType: 'Full-time',
-    experienceLevel: 'Senior',
-    salary: '$140,000 - $165,000',
-    matchScore: 78,
-    tags: ['React Native', 'Tailwind', 'Expo'],
-    description: 'Maintain and scale our cross-platform visual media application. Deploy smooth transition modules and handle background offline caching.',
-    postedDate: '5 days ago',
-    isReverseRecruitment: false
-  },
-  {
-    id: 'job-7',
-    title: 'Front-End Engineer (Contract)',
-    companyName: 'Vapor Labs',
-    logoBg: 'bg-cyan-600',
-    logoText: 'VL',
-    industry: 'Technology',
-    companySize: '1-10',
-    location: 'Fully Remote',
-    jobType: 'Contract',
-    experienceLevel: 'Mid-level',
-    salary: '$75 - $95 / hr',
-    matchScore: 81,
-    tags: ['Vite', 'TypeScript', 'Tailwind'],
-    description: 'Help us assemble modular landing templates and visual interactive sandboxes for our core APIs.',
-    postedDate: '1 week ago',
-    isReverseRecruitment: false
-  }
-];
 
 export const CandidateHomeScreen: React.FC<CandidateHomeScreenProps> = ({
   userData,
@@ -260,7 +127,8 @@ export const CandidateHomeScreen: React.FC<CandidateHomeScreenProps> = ({
 
   // Listen to applications in real-time
   useEffect(() => {
-    const currentCandidateUid = userData.uid || auth.currentUser?.uid || getCandidateUid(userData.name || 'Sarah Chen');
+    const currentCandidateUid = userData.uid || auth.currentUser?.uid || '';
+    if (!currentCandidateUid) return;
     const appsRef = collection(db, 'applications');
     const q = query(appsRef, where('candidateUid', '==', currentCandidateUid));
     
@@ -312,51 +180,23 @@ export const CandidateHomeScreen: React.FC<CandidateHomeScreenProps> = ({
               location: data.location || 'Remote',
               jobType: data.jobType || 'Full-time',
               experienceLevel: data.experienceLevel || 'Senior',
-              salary: data.salary || '$100,000+',
+              salary: data.salary || 'Negotiable',
               matchScore: data.matchScore || Math.floor(Math.random() * 25) + 75,
               tags: data.tags || [],
               description: data.description || '',
               pitch: data.pitch || '',
               postedDate: data.postedDate || '3 days ago',
               isReverseRecruitment: !!data.isReverseRecruitment,
-              recruiterUid: data.recruiterUid || 'mock-recruiter-uid',
+              recruiterUid: data.recruiterUid || '',
             });
           });
           setJobs(loadedJobs);
         } else {
-          // Fallback + Seed automatically in firestore so recruiters can see them too
-          setJobs(DEFAULT_JOBS);
-          // Let's asynchronously write them to Firestore so they exist as actual data!
-          DEFAULT_JOBS.forEach(async (j) => {
-            try {
-              await addDoc(collection(db, 'jobs'), {
-                title: j.title,
-                companyName: j.companyName,
-                logoBg: j.logoBg,
-                logoText: j.logoText,
-                industry: j.industry,
-                companySize: j.companySize,
-                location: j.location,
-                jobType: j.jobType,
-                experienceLevel: j.experienceLevel,
-                salary: j.salary,
-                matchScore: j.matchScore,
-                tags: j.tags,
-                description: j.description,
-                pitch: j.pitch || '',
-                postedDate: j.postedDate,
-                isReverseRecruitment: j.isReverseRecruitment,
-                recruiterUid: 'mock-recruiter-uid',
-                createdAt: serverTimestamp()
-              });
-            } catch (seedErr) {
-              // Fail silently, fallback already works
-            }
-          });
+          setJobs([]);
         }
       } catch (err) {
         console.error("Error reading jobs:", err);
-        setJobs(DEFAULT_JOBS);
+        setJobs([]);
       } finally {
         setLoading(false);
       }
@@ -430,41 +270,15 @@ export const CandidateHomeScreen: React.FC<CandidateHomeScreenProps> = ({
   const reverseRecruitmentJobs = filteredJobs.filter(j => j.isReverseRecruitment);
   const standardOpeningsJobs = filteredJobs.filter(j => !j.isReverseRecruitment);
 
-  // Handle Action Trigger inside Modal
-  const handleModalAction = () => {
-    if (!selectedJob) return;
-    
-    // Compute stable IDs for candidate and recruiter to connect the conversation securely
-    const candidateUid = userData.uid || auth.currentUser?.uid || getCandidateUid(userData.name || 'Sarah Chen');
-    const recruiterUid = 'mock-recruiter-uid';
-    
-    syncApplicationState(candidateUid, recruiterUid, selectedJob.id, {
-      candidateInterested: true,
-      candidateName: userData.name || 'Sarah Chen',
-      candidateAvatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&h=150&fit=crop&crop=face',
-      jobTitle: selectedJob.title,
-      companyName: selectedJob.companyName,
-      recruiterName: 'Elena Rostova',
-      recruiterAvatarUrl: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&h=150&fit=crop&crop=face'
-    }).catch(err => console.error("Error syncing application state:", err));
 
-    if (selectedJob.isReverseRecruitment) {
-      setModalActionState('responded');
-      triggerToast(`Accepted pitch from ${selectedJob.companyName}! Message sent.`);
-    } else {
-      setModalActionState('applied');
-      triggerToast(`Application submitted successfully for ${selectedJob.title}!`);
-    }
-    setModalMessageText('');
-  };
 
   // Express Interest in Firestore with matching conversations & chats
   const handleConfirmInterest = async () => {
     if (!selectedJob) return;
 
     try {
-      const candidateUid = userData.uid || auth.currentUser?.uid || getCandidateUid(userData.name || 'Sarah Chen');
-      const recruiterUid = selectedJob.recruiterUid || 'mock-recruiter-uid';
+      const candidateUid = userData.uid || auth.currentUser?.uid || '';
+      const recruiterUid = selectedJob.recruiterUid || '';
       const jobId = selectedJob.id;
       const applicationId = `${jobId}_${candidateUid}`;
       
@@ -489,6 +303,24 @@ export const CandidateHomeScreen: React.FC<CandidateHomeScreenProps> = ({
         });
       }
 
+      // Create a real-time notification for the recruiter
+      try {
+        const candidateName = userData.basics?.name || userData.displayName || 'A candidate';
+        const jobTitle = selectedJob.title;
+        const notificationId = crypto.randomUUID();
+        await setDoc(doc(db, 'notifications', notificationId), {
+          id: notificationId,
+          user_id: recruiterUid,
+          title: 'Candidate Expressed Interest',
+          message: `${candidateName} has expressed interest in your job posting: "${jobTitle}"`,
+          read: false,
+          createdAt: new Date().toISOString()
+        });
+        console.log("Recruiter notification sent successfully.");
+      } catch (notifErr) {
+        console.error("Failed to send recruiter notification:", notifErr);
+      }
+
       // Re-read recruiterShortlisted on that same document
       const updatedSnap = await getDoc(appRef);
       const updatedData = updatedSnap.exists() ? updatedSnap.data() : null;
@@ -498,6 +330,21 @@ export const CandidateHomeScreen: React.FC<CandidateHomeScreenProps> = ({
         await updateDoc(appRef, {
           chatUnlocked: true
         });
+
+        // Get recruiter and company details dynamically
+        const recruiterRef = doc(db, 'users', recruiterUid);
+        const recruiterSnap = await getDoc(recruiterRef);
+        const recruiterData = recruiterSnap.exists() ? recruiterSnap.data() : null;
+        const recruiterName = recruiterData?.displayName || 'Recruiter';
+        
+        let recruiterAvatarUrl = 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&h=150&fit=crop&crop=face';
+        if (recruiterData?.companyId) {
+          const companyRef = doc(db, 'companies', recruiterData.companyId);
+          const companySnap = await getDoc(companyRef);
+          if (companySnap.exists()) {
+            recruiterAvatarUrl = companySnap.data().logoUrl || recruiterAvatarUrl;
+          }
+        }
 
         // and create the corresponding conversations/{applicationId} document if it doesn't already exist
         const convRef = doc(db, 'conversations', applicationId);
@@ -509,10 +356,10 @@ export const CandidateHomeScreen: React.FC<CandidateHomeScreenProps> = ({
             candidateUid,
             recruiterUid,
             jobId,
-            candidateName: userData.name || 'Sarah Chen',
+            candidateName: userData.name || 'Anonymous Candidate',
             candidateAvatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&h=150&fit=crop&crop=face',
-            recruiterName: 'Elena Rostova',
-            recruiterAvatarUrl: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&h=150&fit=crop&crop=face',
+            recruiterName,
+            recruiterAvatarUrl,
             jobTitle: selectedJob.title,
             companyName: selectedJob.companyName,
             lastMessage: '',
