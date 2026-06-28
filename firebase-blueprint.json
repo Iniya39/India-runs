@@ -29,12 +29,65 @@
         }
       },
       "required": ["email", "displayName", "createdAt"]
+    },
+    "CandidateProfile": {
+      "title": "Candidate Profile",
+      "description": "Represents a comprehensive candidate profile with experience, education, projects, and social validation details.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "User ID matching the Firebase Auth UID."
+        },
+        "basics": {
+          "type": "object",
+          "description": "Basic info containing photo URL, full name, headline, location, experience years and employment status."
+        },
+        "skills": {
+          "type": "array",
+          "description": "List of skill tags."
+        },
+        "experience": {
+          "type": "array",
+          "description": "Repeatable work experience blocks."
+        },
+        "education": {
+          "type": "array",
+          "description": "Repeatable education history blocks."
+        },
+        "projects": {
+          "type": "array",
+          "description": "Repeatable project blocks."
+        },
+        "verification": {
+          "type": "object",
+          "description": "GitHub verification status and portfolio url links."
+        },
+        "onboardingStep": {
+          "type": "number",
+          "description": "The onboarding step last completed, ranging 1-5."
+        },
+        "profileComplete": {
+          "type": "boolean",
+          "description": "Whether the candidate finalized onboarding."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the candidate profile was last updated."
+        }
+      },
+      "required": ["uid", "basics", "skills", "experience", "education", "projects", "verification", "onboardingStep", "profileComplete"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": "User",
       "description": "Primary user configuration records keyed by Firebase Auth unique UID."
+    },
+    "/candidateProfiles/{userId}": {
+      "schema": "CandidateProfile",
+      "description": "Durable candidate profiles containing career history, skills, and portfolio detail."
     }
   }
 }

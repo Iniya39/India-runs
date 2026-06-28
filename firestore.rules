@@ -1,22 +1,87 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // Check if user is authenticated and is the owner of the UID path
-    function isOwner(userId) {
-      return request.auth != null && request.auth.uid == userId;
+
+    // Global Safety Net default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
     }
 
-    // Helper to validate user document format
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Validation for User entity
     function isValidUser(data) {
       return data.email is string
+        && data.email.size() <= 256
         && data.displayName is string
-        && (data.role == null || data.role == 'candidate' || data.role == 'recruiter');
+        && data.displayName.size() <= 256
+        && (data.role == null || data.role == 'candidate' || data.role == 'recruiter')
+        && (data.onboardingComplete == null || data.onboardingComplete is boolean);
+    }
+
+    // Validation for CandidateProfile entity
+    function isValidCandidateProfile(data) {
+      return data.uid is string
+        && data.uid == request.auth.uid
+        && data.basics is map
+        && data.basics.fullName is string
+        && data.basics.fullName.size() <= 256
+        && data.basics.photoUrl is string
+        && data.basics.photoUrl.size() <= 2048
+        && data.basics.headline is string
+        && data.basics.headline.size() <= 256
+        && data.basics.location is string
+        && data.basics.location.size() <= 256
+        && (data.basics.yearsExperience is int || data.basics.yearsExperience is float)
+        && data.basics.employmentStatus is string
+        && data.skills is list
+        && data.skills.size() <= 100
+        && data.experience is list
+        && data.experience.size() <= 50
+        && data.education is list
+        && data.education.size() <= 50
+        && data.projects is list
+        && data.projects.size() <= 50
+        && data.verification is map
+        && data.verification.githubConnected is boolean
+        && data.verification.githubUsername is string
+        && data.verification.portfolioUrl is string
+        && data.onboardingStep is int
+        && data.onboardingStep >= 0
+        && data.onboardingStep <= 5
+        && data.profileComplete is boolean;
     }
 
     match /users/{userId} {
-      allow read: if isOwner(userId);
-      allow create, update: if isOwner(userId) && isValidUser(request.resource.data);
+      allow read: if isSignedIn();
+      allow create: if isOwner(userId) && isValidUser(incoming()) && incoming().createdAt == request.time;
+      allow update: if isOwner(userId) && isValidUser(incoming()) && incoming().createdAt == existing().createdAt;
+      allow delete: if false;
+    }
+
+    match /candidateProfiles/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isOwner(userId) && isValidCandidateProfile(incoming()) && incoming().updatedAt == request.time;
+      allow update: if isOwner(userId) && isValidCandidateProfile(incoming()) && incoming().updatedAt == request.time && incoming().uid == existing().uid;
       allow delete: if false;
     }
   }
