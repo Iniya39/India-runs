@@ -25,6 +25,7 @@ import { Card } from '../components/Card';
 import { Badge } from '../components/Badge';
 import { Avatar } from '../components/Avatar';
 import { FloatingInfoCard } from '../components/FloatingInfoCard';
+import { NavBar, NavLinkItem } from '../components/NavBar';
 import {
   auth,
   db,
@@ -667,25 +668,45 @@ export const CandidateProfileBuilderScreen: React.FC<CandidateProfileBuilderScre
         <span className="absolute top-1/2 -right-40 w-96 h-96 bg-brand-end/5 rounded-full blur-3xl" />
       </div>
 
-      {/* Header Bar */}
-      <div className="max-w-5xl mx-auto w-full px-4 pt-6 pb-4 flex justify-between items-center relative z-10 border-b border-border-warm/30">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-brand-gradient flex items-center justify-center text-white shadow-warm-sm">
-            <Sparkles className="w-4 h-4" />
-          </div>
-          <span className="font-sora font-extrabold text-lg text-text-navy tracking-tight">
-            Talent<span className="text-gradient">Sphere</span>
-          </span>
-        </div>
-
-        <button
-          onClick={handleSaveAndExitClick}
-          className="text-xs font-manrope font-semibold text-text-muted hover:text-accent-orange transition-colors cursor-pointer flex items-center gap-1.5"
-        >
-          <FileText className="w-3.5 h-3.5" />
-          Save & exit
-        </button>
-      </div>
+      {/* Persistent top NavBar */}
+      <NavBar 
+        links={[
+          { 
+            label: 'Home', 
+            href: '#home', 
+            active: false,
+            onClick: handleSaveAndExitClick 
+          },
+          { 
+            label: 'Applications', 
+            href: '#applications', 
+            active: false,
+            onClick: handleSaveAndExitClick 
+          },
+          { 
+            label: 'Messages', 
+            href: '#messages', 
+            active: false,
+            onClick: handleSaveAndExitClick 
+          },
+          { 
+            label: 'Profile', 
+            href: '#profile', 
+            active: true,
+            onClick: () => {} 
+          },
+        ]}
+        user={{
+          name: auth.currentUser?.displayName || userDisplayName || 'Anonymous Candidate',
+          email: auth.currentUser?.email || '',
+          avatarUrl: formData.basics.photoUrl
+        }}
+        onLogout={async () => {
+          await auth.signOut();
+        }}
+        onProfileClick={() => {}}
+        onSettingsClick={handleSaveAndExitClick}
+      />
 
       {/* Step Progress Bar Header */}
       <div className="max-w-3xl mx-auto w-full px-4 mt-8 relative z-10">

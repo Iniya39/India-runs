@@ -1,5 +1,5 @@
-import React, { useState, useRef } from 'react';
-import { motion } from 'motion/react';
+import React, { useState, useRef, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import {
   Sparkles,
   Building2,
@@ -9,11 +9,24 @@ import {
   ArrowRight,
   PlusCircle,
   FileText,
-  Image as ImageIcon
+  Image as ImageIcon,
+  AlertCircle,
+  X
 } from 'lucide-react';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { BackgroundBlob } from '../components/BackgroundBlobs';
+import {
+  auth,
+  db,
+  doc,
+  getDoc,
+  collection,
+  addDoc,
+  updateDoc,
+  serverTimestamp,
+  uploadCompanyLogo
+} from '../firebase';
 
 export interface RecruiterCompanyData {
   companyName: string;
@@ -39,6 +52,14 @@ export const RecruiterCompanySetupScreen: React.FC<RecruiterCompanySetupScreenPr
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isSuccessState, setIsSuccessState] = useState(false);
 
+  // Persistence/Loading State
+  const [loadingProfile, setLoadingProfile] = useState(true);
+  const [existingCompanyId, setExistingCompanyId] = useState<string | null>(null);
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
+
   // Form State Setup
   const [formData, setFormData] = useState<RecruiterCompanyData>({
     companyName: initialData?.companyName || '',
@@ -50,10 +71,78 @@ export const RecruiterCompanySetupScreen: React.FC<RecruiterCompanySetupScreenPr
     hiringContextNote: initialData?.hiringContextNote || '',
   });
 
+  // Resume on Return implementation
+  useEffect(() => {
+    let active = true;
+    const loadExistingData = async () => {
+      const user = auth.currentUser;
+      if (!user) {
+        setLoadingProfile(false);
+        return;
+      }
+      try {
+        const userRef = doc(db, 'users', user.uid);
+        const userSnap = await getDoc(userRef);
+        if (userSnap && userSnap.exists() && active) {
+          const userData = userSnap.data();
+          const recruiterTitle = userData.recruiterTitle || '';
+          const companyId = userData.companyId;
+          
+          if (companyId) {
+            setExistingCompanyId(companyId);
+            const companyRef = doc(db, 'companies', companyId);
+            const companySnap = await getDoc(companyRef);
+            if (companySnap && companySnap.exists() && active) {
+              const compData = companySnap.data();
+              setFormData({
+                companyName: compData.companyName || '',
+                logoUrl: compData.logoUrl || '',
+                industry: compData.industry || '',
+                companySize: compData.companySize || '11-50',
+                recruiterTitle: recruiterTitle || compData.recruiterTitle || '',
+                companyWebsite: compData.companyWebsite || '',
+                hiringContextNote: compData.hiringContextNote || '',
+              });
+            } else {
+              setFormData((prev) => ({
+                ...prev,
+                recruiterTitle,
+              }));
+            }
+          } else {
+            setFormData((prev) => ({
+              ...prev,
+              recruiterTitle,
+            }));
+          }
+        }
+      } catch (err) {
+        console.error("Error loading existing recruiter/company data:", err);
+      } finally {
+        if (active) {
+          setLoadingProfile(false);
+        }
+      }
+    };
+    loadExistingData();
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // Handle Logo Upload Preview
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      // Validate file size limit of 5MB
+      const maxSizeBytes = 5 * 1024 * 1024;
+      if (file.size > maxSizeBytes) {
+        setSaveError("File is too large. Max size limit is 5MB.");
+        return;
+      }
+
+      setSaveError(null);
+      setLogoFile(file);
       const reader = new FileReader();
       reader.onloadend = () => {
         setFormData((prev) => ({
@@ -68,13 +157,185 @@ export const RecruiterCompanySetupScreen: React.FC<RecruiterCompanySetupScreenPr
   // Determine if minimum required fields are filled: Company Name and Industry
   const isValid = formData.companyName.trim() !== '' && formData.industry !== '';
 
-  const handleContinue = () => {
+  const handleContinue = async () => {
     if (!isValid) return;
-    setIsSuccessState(true);
-    setTimeout(() => {
-      onComplete(formData);
-    }, 1800);
+    const user = auth.currentUser;
+    if (!user) {
+      setSaveError("No authenticated user session found.");
+      return;
+    }
+
+    setIsSaving(true);
+    setSaveError(null);
+
+    try {
+      const uid = user.uid;
+      let companyId = existingCompanyId;
+
+      if (companyId) {
+        // Update existing company document
+        const companyRef = doc(db, 'companies', companyId);
+        await updateDoc(companyRef, {
+          companyName: formData.companyName.trim(),
+          industry: formData.industry,
+          companySize: formData.companySize,
+          companyWebsite: formData.companyWebsite.trim(),
+          hiringContextNote: formData.hiringContextNote.trim()
+        });
+      } else {
+        // Create new company document
+        const companyPayload = {
+          companyName: formData.companyName.trim(),
+          logoUrl: '',
+          industry: formData.industry,
+          companySize: formData.companySize,
+          companyWebsite: formData.companyWebsite.trim(),
+          hiringContextNote: formData.hiringContextNote.trim(),
+          createdByUid: uid,
+          recruiterUids: [uid],
+          createdAt: serverTimestamp()
+        };
+        const docRef = await addDoc(collection(db, 'companies'), companyPayload);
+        companyId = docRef.id;
+        setExistingCompanyId(companyId);
+      }
+
+      // 2. Upload the logo if selected
+      let finalLogoUrl = formData.logoUrl;
+      if (logoFile && companyId) {
+        setIsUploadingLogo(true);
+        try {
+          finalLogoUrl = await uploadCompanyLogo(companyId, logoFile);
+          await updateDoc(doc(db, 'companies', companyId), { logoUrl: finalLogoUrl });
+        } catch (uploadErr) {
+          console.error("Failed uploading logo:", uploadErr);
+          throw new Error("Logo upload failed");
+        } finally {
+          setIsUploadingLogo(false);
+        }
+      }
+
+      // 3. Update the existing users/{uid} document setting onboardingComplete: true, companyId, recruiterTitle
+      const userRef = doc(db, 'users', uid);
+      await updateDoc(userRef, {
+        onboardingComplete: true,
+        companyId: companyId,
+        recruiterTitle: formData.recruiterTitle.trim()
+      });
+
+      // 4. Update the local state with final logoUrl if any
+      const finalData = {
+        ...formData,
+        logoUrl: finalLogoUrl || formData.logoUrl
+      };
+      setFormData(finalData);
+
+      setIsSuccessState(true);
+      setTimeout(() => {
+        onComplete(finalData);
+      }, 1800);
+
+    } catch (err) {
+      console.error("Error continuing setup:", err);
+      setSaveError("Something went wrong saving your company details. Please try again.");
+    } finally {
+      setIsSaving(false);
+    }
   };
+
+  const handleSaveAndExitClick = async () => {
+    const user = auth.currentUser;
+    if (!user) {
+      if (onSaveAndExit) onSaveAndExit(formData);
+      return;
+    }
+
+    setIsSaving(true);
+    setSaveError(null);
+
+    try {
+      const uid = user.uid;
+      let companyId = existingCompanyId;
+
+      if (companyId) {
+        // Update existing company document
+        const companyRef = doc(db, 'companies', companyId);
+        await updateDoc(companyRef, {
+          companyName: formData.companyName.trim(),
+          industry: formData.industry,
+          companySize: formData.companySize,
+          companyWebsite: formData.companyWebsite.trim(),
+          hiringContextNote: formData.hiringContextNote.trim()
+        });
+      } else {
+        // Create new company document
+        const companyPayload = {
+          companyName: formData.companyName.trim(),
+          logoUrl: '',
+          industry: formData.industry,
+          companySize: formData.companySize,
+          companyWebsite: formData.companyWebsite.trim(),
+          hiringContextNote: formData.hiringContextNote.trim(),
+          createdByUid: uid,
+          recruiterUids: [uid],
+          createdAt: serverTimestamp()
+        };
+        const docRef = await addDoc(collection(db, 'companies'), companyPayload);
+        companyId = docRef.id;
+        setExistingCompanyId(companyId);
+      }
+
+      // 2. Upload the logo if selected
+      let finalLogoUrl = formData.logoUrl;
+      if (logoFile && companyId) {
+        setIsUploadingLogo(true);
+        try {
+          finalLogoUrl = await uploadCompanyLogo(companyId, logoFile);
+          await updateDoc(doc(db, 'companies', companyId), { logoUrl: finalLogoUrl });
+        } catch (uploadErr) {
+          console.error("Failed uploading logo on exit:", uploadErr);
+        } finally {
+          setIsUploadingLogo(false);
+        }
+      }
+
+      // 3. Update the existing users/{uid} document setting companyId, recruiterTitle
+      const userRef = doc(db, 'users', uid);
+      await updateDoc(userRef, {
+        companyId: companyId,
+        recruiterTitle: formData.recruiterTitle.trim()
+      });
+
+      const finalData = {
+        ...formData,
+        logoUrl: finalLogoUrl || formData.logoUrl
+      };
+
+      if (onSaveAndExit) {
+        onSaveAndExit(finalData);
+      }
+    } catch (err) {
+      console.error("Error on save and exit:", err);
+      // Even if firestore write fails, let them exit
+      if (onSaveAndExit) onSaveAndExit(formData);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  if (loadingProfile) {
+    return (
+      <div className="min-h-screen bg-page-gradient flex items-center justify-center p-4">
+        <div className="flex flex-col items-center gap-3">
+          <svg className="animate-spin h-8 w-8 text-accent-orange" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          <span className="font-manrope text-sm text-text-muted font-semibold animate-pulse">Loading company profile...</span>
+        </div>
+      </div>
+    );
+  }
 
   if (isSuccessState) {
     return (
@@ -127,11 +388,12 @@ export const RecruiterCompanySetupScreen: React.FC<RecruiterCompanySetupScreenPr
 
         {onSaveAndExit && (
           <button
-            onClick={() => onSaveAndExit(formData)}
-            className="text-xs font-manrope font-semibold text-text-muted hover:text-accent-orange transition-colors cursor-pointer flex items-center gap-1.5"
+            onClick={handleSaveAndExitClick}
+            disabled={isSaving}
+            className="text-xs font-manrope font-semibold text-text-muted hover:text-accent-orange transition-colors cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
           >
             <FileText className="w-3.5 h-3.5" />
-            Save & exit
+            {isSaving ? "Saving..." : "Save & exit"}
           </button>
         )}
       </div>
@@ -147,6 +409,33 @@ export const RecruiterCompanySetupScreen: React.FC<RecruiterCompanySetupScreenPr
           </p>
         </div>
 
+        {/* Dissmissible Error Banner */}
+        <AnimatePresence>
+          {saveError && (
+            <motion.div
+              initial={{ opacity: 0, height: 0, y: -10 }}
+              animate={{ opacity: 1, height: 'auto', y: 0 }}
+              exit={{ opacity: 0, height: 0, y: -10 }}
+              className="mb-4 overflow-hidden"
+            >
+              <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-800 flex items-start gap-3 shadow-warm-sm">
+                <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                <div className="flex-grow">
+                  <p className="text-xs font-manrope leading-normal font-semibold">
+                    {saveError}
+                  </p>
+                </div>
+                <button 
+                  onClick={() => setSaveError(null)}
+                  className="p-1 rounded-full hover:bg-red-100 text-red-500 transition cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <Card className="flex flex-col gap-5 p-6 sm:p-8 shadow-warm-lg" id="recruiter-setup-card">
           {/* Logo upload & Company Name Block */}
           <div className="flex items-center gap-4.5 pb-4 border-b border-border-warm/30">
@@ -154,10 +443,13 @@ export const RecruiterCompanySetupScreen: React.FC<RecruiterCompanySetupScreenPr
             <div className="relative flex-shrink-0">
               <button
                 type="button"
+                disabled={isUploadingLogo || isSaving}
                 onClick={() => fileInputRef.current?.click()}
-                className="w-16 h-16 rounded-xl border-2 border-dashed border-border-warm bg-surface hover:bg-orange-50/20 hover:border-accent-orange/40 transition-all flex flex-col items-center justify-center text-text-muted gap-1 cursor-pointer overflow-hidden"
+                className="w-16 h-16 rounded-xl border-2 border-dashed border-border-warm bg-surface hover:bg-orange-50/20 hover:border-accent-orange/40 transition-all flex flex-col items-center justify-center text-text-muted gap-1 cursor-pointer overflow-hidden disabled:opacity-50"
               >
-                {formData.logoUrl ? (
+                {isUploadingLogo ? (
+                  <div className="w-5 h-5 border-2 border-accent-orange border-t-transparent rounded-full animate-spin" />
+                ) : formData.logoUrl ? (
                   <img src={formData.logoUrl} alt="Logo" className="w-full h-full object-cover" />
                 ) : (
                   <>
@@ -172,6 +464,7 @@ export const RecruiterCompanySetupScreen: React.FC<RecruiterCompanySetupScreenPr
                 onChange={handleLogoUpload}
                 accept="image/*"
                 className="hidden"
+                disabled={isUploadingLogo || isSaving}
               />
             </div>
 
@@ -188,6 +481,7 @@ export const RecruiterCompanySetupScreen: React.FC<RecruiterCompanySetupScreenPr
                   setFormData((prev) => ({ ...prev, companyName: e.target.value }))
                 }
                 className="w-full px-3 py-2 bg-surface border border-border-warm rounded-lg font-manrope text-xs focus:outline-none focus:border-accent-orange focus:ring-1 focus:ring-accent-orange transition-all"
+                disabled={isSaving}
               />
             </div>
           </div>
@@ -204,6 +498,7 @@ export const RecruiterCompanySetupScreen: React.FC<RecruiterCompanySetupScreenPr
                 setFormData((prev) => ({ ...prev, industry: e.target.value }))
               }
               className="w-full px-3 py-2.5 bg-surface border border-border-warm rounded-lg font-manrope text-xs focus:outline-none focus:border-accent-orange focus:ring-1 focus:ring-accent-orange transition-all"
+              disabled={isSaving}
             >
               <option value="" disabled>Select your company's sector</option>
               <option value="Tech">Technology, Software & AI</option>
@@ -236,6 +531,7 @@ export const RecruiterCompanySetupScreen: React.FC<RecruiterCompanySetupScreenPr
                         ? 'bg-brand-gradient text-white border-transparent shadow-warm-sm'
                         : 'bg-white text-text-muted border-border-warm hover:border-accent-orange/40'
                     }`}
+                    disabled={isSaving}
                   >
                     {size}
                   </button>
@@ -257,6 +553,7 @@ export const RecruiterCompanySetupScreen: React.FC<RecruiterCompanySetupScreenPr
                 setFormData((prev) => ({ ...prev, recruiterTitle: e.target.value }))
               }
               className="w-full px-3 py-2 bg-surface border border-border-warm rounded-lg font-manrope text-xs focus:outline-none focus:border-accent-orange focus:ring-1 focus:ring-accent-orange transition-all"
+              disabled={isSaving}
             />
           </div>
 
@@ -274,6 +571,7 @@ export const RecruiterCompanySetupScreen: React.FC<RecruiterCompanySetupScreenPr
                 setFormData((prev) => ({ ...prev, companyWebsite: e.target.value }))
               }
               className="w-full px-3 py-2 bg-surface border border-border-warm rounded-lg font-manrope text-xs focus:outline-none focus:border-accent-orange focus:ring-1 focus:ring-accent-orange transition-all"
+              disabled={isSaving}
             />
           </div>
 
@@ -291,6 +589,7 @@ export const RecruiterCompanySetupScreen: React.FC<RecruiterCompanySetupScreenPr
                 setFormData((prev) => ({ ...prev, hiringContextNote: e.target.value }))
               }
               className="w-full px-3 py-2 bg-surface border border-border-warm rounded-lg font-manrope text-xs focus:outline-none focus:border-accent-orange focus:ring-1 focus:ring-accent-orange transition-all resize-none"
+              disabled={isSaving}
             />
             <p className="text-[10px] text-text-muted leading-relaxed font-manrope">
               Anything about your team or hiring needs that might help our AI understand context (e.g. fast-paced startup, remote-first, specific tech culture).
@@ -300,15 +599,24 @@ export const RecruiterCompanySetupScreen: React.FC<RecruiterCompanySetupScreenPr
           {/* Bottom Call to Action Button */}
           <Button
             variant="primary"
-            disabled={!isValid}
+            disabled={!isValid || isSaving}
             onClick={handleContinue}
-            className={`w-full py-3 mt-2 font-bold shadow-warm-md text-sm rounded-full ${
-              !isValid ? 'opacity-50 cursor-not-allowed' : ''
+            className={`w-full py-3 mt-2 font-bold shadow-warm-md text-sm rounded-full flex items-center justify-center gap-2 ${
+              !isValid || isSaving ? 'opacity-50 cursor-not-allowed' : ''
             }`}
             id="recruiter-continue-button"
           >
-            Continue to dashboard
-            <ArrowRight className="w-4 h-4" />
+            {isSaving ? (
+              <>
+                Saving details...
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              </>
+            ) : (
+              <>
+                Continue to dashboard
+                <ArrowRight className="w-4 h-4" />
+              </>
+            )}
           </Button>
         </Card>
       </div>
