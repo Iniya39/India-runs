@@ -25,6 +25,9 @@ import { Button } from '../components/Button';
 import { Badge } from '../components/Badge';
 import { FloatingInfoCard } from '../components/FloatingInfoCard';
 import { NavBar, NavLinkItem } from '../components/NavBar';
+import { PrivateChat } from '../components/PrivateChat';
+import { JobDetailScreen } from './JobDetailScreen';
+import { getCandidateUid, syncApplicationState } from '../lib/chatUtils';
 import { 
   db, 
   auth, 
@@ -33,7 +36,12 @@ import {
   doc, 
   getDoc,
   addDoc,
-  serverTimestamp 
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  onSnapshot,
+  query,
+  where
 } from '../firebase';
 
 export interface JobMatch {
@@ -55,10 +63,11 @@ export interface JobMatch {
   pitch?: string;
   postedDate: string; // e.g. "2 days ago"
   isReverseRecruitment: boolean;
+  recruiterUid?: string;
 }
 
 interface CandidateHomeScreenProps {
-  userData: { name?: string; email: string };
+  userData: { uid?: string; name?: string; email: string; role?: string };
   onLogout: () => void;
   onNavigateToProfile: () => void;
 }
@@ -205,6 +214,38 @@ export const CandidateHomeScreen: React.FC<CandidateHomeScreenProps> = ({
   const [activeTab, setActiveTab] = useState<'home' | 'applications' | 'messages' | 'profile'>('home');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // Deep-link / Hash-based routing state for full Job Detail page
+  const [selectedJobIdForDetail, setSelectedJobIdForDetail] = useState<string | null>(() => {
+    const hash = window.location.hash;
+    if (hash.startsWith('#/job/')) {
+      return hash.replace('#/job/', '');
+    }
+    return null;
+  });
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash;
+      if (hash.startsWith('#/job/')) {
+        setSelectedJobIdForDetail(hash.replace('#/job/', ''));
+      } else {
+        setSelectedJobIdForDetail(null);
+      }
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  const handleNavigateToJob = (jobId: string) => {
+    window.location.hash = `#/job/${jobId}`;
+    setSelectedJobIdForDetail(jobId);
+  };
+
+  const handleBackFromJob = () => {
+    window.location.hash = '';
+    setSelectedJobIdForDetail(null);
+  };
+
   // Search & Filtering State
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilters, setShowFilters] = useState(false);
@@ -215,6 +256,32 @@ export const CandidateHomeScreen: React.FC<CandidateHomeScreenProps> = ({
   // Database jobs
   const [jobs, setJobs] = useState<JobMatch[]>([]);
   const [loading, setLoading] = useState(true);
+  const [appliedJobIds, setAppliedJobIds] = useState<Record<string, { candidateInterested: boolean; chatUnlocked: boolean }>>({});
+
+  // Listen to applications in real-time
+  useEffect(() => {
+    const currentCandidateUid = userData.uid || auth.currentUser?.uid || getCandidateUid(userData.name || 'Sarah Chen');
+    const appsRef = collection(db, 'applications');
+    const q = query(appsRef, where('candidateUid', '==', currentCandidateUid));
+    
+    const unsubscribe = onSnapshot(q, (snapshot: any) => {
+      const mapping: Record<string, { candidateInterested: boolean; chatUnlocked: boolean }> = {};
+      snapshot.forEach((docSnap: any) => {
+        const data = docSnap.data();
+        if (data && data.jobId) {
+          mapping[data.jobId] = {
+            candidateInterested: !!data.candidateInterested,
+            chatUnlocked: !!data.chatUnlocked
+          };
+        }
+      });
+      setAppliedJobIds(mapping);
+    }, (err) => {
+      console.error("Error subscribing to applications:", err);
+    });
+    
+    return () => unsubscribe();
+  }, [userData.uid, userData.name]);
 
   // Pagination for Standard Feed
   const [visibleCount, setVisibleCount] = useState(4);
@@ -252,6 +319,7 @@ export const CandidateHomeScreen: React.FC<CandidateHomeScreenProps> = ({
               pitch: data.pitch || '',
               postedDate: data.postedDate || '3 days ago',
               isReverseRecruitment: !!data.isReverseRecruitment,
+              recruiterUid: data.recruiterUid || 'mock-recruiter-uid',
             });
           });
           setJobs(loadedJobs);
@@ -278,6 +346,7 @@ export const CandidateHomeScreen: React.FC<CandidateHomeScreenProps> = ({
                 pitch: j.pitch || '',
                 postedDate: j.postedDate,
                 isReverseRecruitment: j.isReverseRecruitment,
+                recruiterUid: 'mock-recruiter-uid',
                 createdAt: serverTimestamp()
               });
             } catch (seedErr) {
@@ -364,6 +433,21 @@ export const CandidateHomeScreen: React.FC<CandidateHomeScreenProps> = ({
   // Handle Action Trigger inside Modal
   const handleModalAction = () => {
     if (!selectedJob) return;
+    
+    // Compute stable IDs for candidate and recruiter to connect the conversation securely
+    const candidateUid = userData.uid || auth.currentUser?.uid || getCandidateUid(userData.name || 'Sarah Chen');
+    const recruiterUid = 'mock-recruiter-uid';
+    
+    syncApplicationState(candidateUid, recruiterUid, selectedJob.id, {
+      candidateInterested: true,
+      candidateName: userData.name || 'Sarah Chen',
+      candidateAvatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&h=150&fit=crop&crop=face',
+      jobTitle: selectedJob.title,
+      companyName: selectedJob.companyName,
+      recruiterName: 'Elena Rostova',
+      recruiterAvatarUrl: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&h=150&fit=crop&crop=face'
+    }).catch(err => console.error("Error syncing application state:", err));
+
     if (selectedJob.isReverseRecruitment) {
       setModalActionState('responded');
       triggerToast(`Accepted pitch from ${selectedJob.companyName}! Message sent.`);
@@ -373,6 +457,97 @@ export const CandidateHomeScreen: React.FC<CandidateHomeScreenProps> = ({
     }
     setModalMessageText('');
   };
+
+  // Express Interest in Firestore with matching conversations & chats
+  const handleConfirmInterest = async () => {
+    if (!selectedJob) return;
+
+    try {
+      const candidateUid = userData.uid || auth.currentUser?.uid || getCandidateUid(userData.name || 'Sarah Chen');
+      const recruiterUid = selectedJob.recruiterUid || 'mock-recruiter-uid';
+      const jobId = selectedJob.id;
+      const applicationId = `${jobId}_${candidateUid}`;
+      
+      const appRef = doc(db, 'applications', applicationId);
+      const appSnap = await getDoc(appRef);
+
+      if (!appSnap.exists()) {
+        // Document doesn't exist, create it
+        await setDoc(appRef, {
+          candidateUid,
+          recruiterUid,
+          jobId,
+          candidateInterested: true,
+          recruiterShortlisted: false,
+          chatUnlocked: false,
+          createdAt: serverTimestamp()
+        });
+      } else {
+        // Document already exists, update setting candidateInterested: true
+        await updateDoc(appRef, {
+          candidateInterested: true
+        });
+      }
+
+      // Re-read recruiterShortlisted on that same document
+      const updatedSnap = await getDoc(appRef);
+      const updatedData = updatedSnap.exists() ? updatedSnap.data() : null;
+      
+      if (updatedData && updatedData.recruiterShortlisted) {
+        // if recruiterShortlisted is also true, updateDoc setting chatUnlocked: true
+        await updateDoc(appRef, {
+          chatUnlocked: true
+        });
+
+        // and create the corresponding conversations/{applicationId} document if it doesn't already exist
+        const convRef = doc(db, 'conversations', applicationId);
+        const convSnap = await getDoc(convRef);
+
+        if (!convSnap.exists()) {
+          await setDoc(convRef, {
+            id: applicationId,
+            candidateUid,
+            recruiterUid,
+            jobId,
+            candidateName: userData.name || 'Sarah Chen',
+            candidateAvatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&h=150&fit=crop&crop=face',
+            recruiterName: 'Elena Rostova',
+            recruiterAvatarUrl: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&h=150&fit=crop&crop=face',
+            jobTitle: selectedJob.title,
+            companyName: selectedJob.companyName,
+            lastMessage: '',
+            lastMessageAt: new Date().toISOString(),
+            unreadByCandidate: false,
+            unreadByRecruiter: false
+          });
+        }
+      }
+
+      // Show a brief toast/confirmation
+      triggerToast("Interest sent! We'll notify you if there's a match.");
+      setSelectedJob(null);
+    } catch (err) {
+      console.error("Error in handleConfirmInterest:", err);
+      triggerToast("Failed to express interest. Please try again.");
+    }
+  };
+
+  if (selectedJobIdForDetail) {
+    const currentJob = jobs.find(j => j.id === selectedJobIdForDetail);
+    return (
+      <JobDetailScreen
+        jobId={selectedJobIdForDetail}
+        onBack={handleBackFromJob}
+        userData={userData}
+        appliedJobIds={appliedJobIds}
+        triggerToast={triggerToast}
+        onInterestExpressed={() => {
+          // Subscriptions handle the state in real-time, but we can do extra triggers here if needed
+        }}
+        fallbackJob={currentJob}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-page-gradient overflow-x-hidden font-manrope pb-12">
@@ -407,7 +582,25 @@ export const CandidateHomeScreen: React.FC<CandidateHomeScreenProps> = ({
           )}
         </AnimatePresence>
 
-        {/* Header Hero Greeting */}
+        {activeTab === 'messages' ? (
+          <motion.div
+            key="messages-tab"
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -15 }}
+            transition={{ duration: 0.3 }}
+            className="w-full"
+          >
+            <PrivateChat
+              currentUserId={userData.uid || auth.currentUser?.uid || getCandidateUid(userData.name || 'Sarah Chen')}
+              currentRole="candidate"
+              userName={userData.name || 'Sarah Chen'}
+              onBackToHome={() => setActiveTab('home')}
+            />
+          </motion.div>
+        ) : (
+          <>
+            {/* Header Hero Greeting */}
         <div className="flex flex-col gap-1.5 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="font-sora text-2xl sm:text-3xl font-extrabold text-text-navy tracking-tight">
@@ -636,15 +829,18 @@ export const CandidateHomeScreen: React.FC<CandidateHomeScreenProps> = ({
                     {/* Gradient Action Button */}
                     <div className="mt-2.5 w-full">
                       <Button
-                        variant="primary"
+                        variant={appliedJobIds[job.id]?.candidateInterested ? "secondary" : "primary"}
                         onClick={() => {
-                          setSelectedJob(job);
-                          setModalActionState('idle');
+                          handleNavigateToJob(job.id);
                         }}
-                        className="w-full py-2.5 text-xs font-bold shadow-warm-sm hover:scale-[1.01]"
+                        className={`w-full py-2.5 text-xs font-bold transition-all ${
+                          appliedJobIds[job.id]?.candidateInterested
+                            ? 'text-text-navy hover:text-accent-orange hover:border-accent-orange border-border-warm'
+                            : 'shadow-warm-sm hover:scale-[1.01]'
+                        }`}
                       >
-                        View & Respond
-                        <ArrowRight className="w-3.5 h-3.5" />
+                        {appliedJobIds[job.id]?.candidateInterested ? 'Interest sent ✓ (View Details)' : 'View & Respond'}
+                        {!appliedJobIds[job.id]?.candidateInterested && <ArrowRight className="w-3.5 h-3.5" />}
                       </Button>
                     </div>
                   </Card>
@@ -727,19 +923,18 @@ export const CandidateHomeScreen: React.FC<CandidateHomeScreenProps> = ({
                       </div>
                     </div>
 
-                    {/* View Details Primary Action (Outlined/Secondary, not gradient) */}
-                    <div className="w-full">
-                      <Button
-                        variant="secondary"
-                        onClick={() => {
-                          setSelectedJob(job);
-                          setModalActionState('idle');
-                        }}
-                        className="w-full py-2.5 text-xs text-text-navy hover:text-accent-orange hover:border-accent-orange transition-colors"
-                      >
-                        View Details
-                      </Button>
-                    </div>
+                     {/* View Details Primary Action (Outlined/Secondary, not gradient) */}
+                     <div className="w-full">
+                       <Button
+                         variant="secondary"
+                         onClick={() => {
+                           handleNavigateToJob(job.id);
+                         }}
+                         className="w-full py-2.5 text-xs text-text-navy transition-colors hover:text-accent-orange hover:border-accent-orange cursor-pointer"
+                       >
+                         {appliedJobIds[job.id]?.candidateInterested ? 'Interest sent ✓ (View Details)' : 'View Details'}
+                       </Button>
+                     </div>
                   </Card>
                 ))}
               </div>
@@ -759,194 +954,12 @@ export const CandidateHomeScreen: React.FC<CandidateHomeScreenProps> = ({
             </div>
           )}
         </section>
+          </>
+        )}
 
       </main>
 
-      {/* 5. JOB DETAIL & RESPONSE MODAL DIALOG */}
-      <AnimatePresence>
-        {selectedJob && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            {/* Backdrop */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setSelectedJob(null)}
-              className="absolute inset-0 bg-text-navy/50 backdrop-blur-sm"
-            />
 
-            {/* Modal Box */}
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 15 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              transition={{ type: 'spring', duration: 0.4 }}
-              className="relative w-full max-w-lg bg-white rounded-3xl border border-border-warm shadow-warm-xl p-6 sm:p-7 overflow-y-auto max-h-[90vh] z-10 flex flex-col gap-5"
-            >
-              {/* Close Button */}
-              <button
-                onClick={() => setSelectedJob(null)}
-                className="absolute right-4 top-4 p-1.5 rounded-full hover:bg-border-warm/20 text-text-muted hover:text-text-navy cursor-pointer transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-
-              {/* Title & Header */}
-              <div className="flex gap-3.5 pb-4 border-b border-border-warm/40">
-                {selectedJob.logoUrl ? (
-                  <img src={selectedJob.logoUrl} alt={selectedJob.companyName} className="w-12 h-12 rounded-xl object-cover mt-0.5" />
-                ) : (
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-white text-base font-extrabold font-sora mt-0.5 ${selectedJob.logoBg}`}>
-                    {selectedJob.logoText}
-                  </div>
-                )}
-                <div>
-                  <Badge 
-                    text={`${selectedJob.matchScore}% Match Score`} 
-                    variant={selectedJob.isReverseRecruitment ? "gradient" : "orange"} 
-                    className="text-[9px] mb-1 px-2 py-0.5"
-                  />
-                  <h3 className="font-sora font-extrabold text-base sm:text-lg text-text-navy leading-snug">
-                    {selectedJob.title}
-                  </h3>
-                  <p className="font-manrope text-xs text-text-muted mt-0.5">
-                    {selectedJob.companyName} • {selectedJob.location} • {selectedJob.salary}
-                  </p>
-                </div>
-              </div>
-
-              {/* Modal Body / Job Content */}
-              <div className="flex flex-col gap-4 overflow-y-auto pr-1">
-                {selectedJob.isReverseRecruitment && selectedJob.pitch && (
-                  <div className="p-4 rounded-2xl bg-orange-50/20 border border-accent-orange/15">
-                    <span className="text-[9px] font-extrabold text-accent-orange uppercase tracking-wider bg-accent-orange/10 px-2 py-0.5 rounded-full">
-                      Direct Pitch From Recruiter
-                    </span>
-                    <p className="font-manrope text-xs text-text-muted italic leading-relaxed mt-2.5">
-                      "{selectedJob.pitch}"
-                    </p>
-                  </div>
-                )}
-
-                <div className="flex flex-col gap-1.5">
-                  <h4 className="text-[11px] font-bold text-text-navy uppercase tracking-wider">About the Role</h4>
-                  <p className="text-xs sm:text-sm font-manrope text-text-muted leading-relaxed">
-                    {selectedJob.description}
-                  </p>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <h4 className="text-[11px] font-bold text-text-navy uppercase tracking-wider">Key Qualifications</h4>
-                  <div className="flex flex-wrap gap-1.5">
-                    {selectedJob.tags.map((tag, idx) => (
-                      <span key={idx} className="text-[11px] font-semibold bg-border-warm/50 text-text-navy px-2.5 py-1 rounded-full">
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3 mt-1 bg-surface border border-border-warm p-3 rounded-2xl">
-                  <div>
-                    <span className="text-[9px] text-text-muted uppercase font-bold">Industry Sector</span>
-                    <p className="text-xs font-bold text-text-navy mt-0.5">{selectedJob.industry}</p>
-                  </div>
-                  <div>
-                    <span className="text-[9px] text-text-muted uppercase font-bold">Company Size</span>
-                    <p className="text-xs font-bold text-text-navy mt-0.5">{selectedJob.companySize} employees</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Dynamic Interactive Response Section */}
-              <div className="border-t border-border-warm/40 pt-4 flex flex-col gap-3">
-                {modalActionState === 'idle' ? (
-                  <>
-                    {selectedJob.isReverseRecruitment ? (
-                      /* Reverse Recruitment Interaction: View & Respond */
-                      <div className="flex flex-col gap-3">
-                        <textarea
-                          placeholder="Include a short quick response to the recruiter (optional)..."
-                          value={modalMessageText}
-                          onChange={(e) => setModalMessageText(e.target.value)}
-                          className="w-full px-3.5 py-2.5 bg-surface border border-border-warm rounded-xl font-manrope text-xs text-text-navy focus:outline-none focus:border-accent-orange focus:ring-1 focus:ring-accent-orange transition-all h-20 resize-none"
-                        />
-                        <div className="flex items-center gap-2">
-                          <Button
-                            variant="secondary"
-                            onClick={() => setSelectedJob(null)}
-                            className="flex-1 py-2 text-xs"
-                          >
-                            Decline Pitch
-                          </Button>
-                          <Button
-                            variant="primary"
-                            onClick={handleModalAction}
-                            className="flex-1 py-2 text-xs font-bold shadow-warm-sm"
-                          >
-                            Accept & Reveal Identity
-                          </Button>
-                        </div>
-                      </div>
-                    ) : (
-                      /* Standard Job details interaction */
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="secondary"
-                          onClick={() => {
-                            triggerToast(`Saved ${selectedJob.title} to bookmarks!`);
-                            setSelectedJob(null);
-                          }}
-                          className="px-3.5 py-2 text-text-navy hover:text-accent-orange border-border-warm"
-                          title="Bookmark job"
-                        >
-                          <Bookmark className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          variant="secondary"
-                          onClick={() => setSelectedJob(null)}
-                          className="flex-1 py-2 text-xs"
-                        >
-                          Close Details
-                        </Button>
-                        <Button
-                          variant="primary"
-                          onClick={handleModalAction}
-                          className="flex-2 py-2 text-xs font-bold shadow-warm-sm"
-                        >
-                          Submit Profile Application
-                        </Button>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  /* Success/Action Complete Message */
-                  <div className="text-center py-2 flex flex-col items-center gap-2">
-                    <div className="w-10 h-10 rounded-full bg-success-green/10 flex items-center justify-center text-success-green">
-                      <CheckCircle2 className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold text-text-navy">
-                        {modalActionState === 'responded' ? 'Outreach Accepted!' : 'Applied successfully!'}
-                      </p>
-                      <p className="text-[10px] text-text-muted mt-0.5">
-                        Our matchmaking models will update your dashboard with the next steps as recruiters follow up.
-                      </p>
-                    </div>
-                    <Button
-                      variant="secondary"
-                      onClick={() => setSelectedJob(null)}
-                      className="mt-2 py-1.5 px-4 text-xs"
-                    >
-                      Return to Workspace
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
 
     </div>
   );

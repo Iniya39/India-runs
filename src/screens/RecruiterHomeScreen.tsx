@@ -49,13 +49,18 @@ import { Badge } from '../components/Badge';
 import { Avatar } from '../components/Avatar';
 import { FloatingInfoCard } from '../components/FloatingInfoCard';
 import { NavBar, NavLinkItem } from '../components/NavBar';
+import { PrivateChat } from '../components/PrivateChat';
+import { syncApplicationState, getCandidateUid } from '../lib/chatUtils';
 import { 
   db, 
   auth, 
   collection, 
   getDocs, 
   addDoc,
-  serverTimestamp 
+  serverTimestamp,
+  onSnapshot,
+  doc,
+  getDoc
 } from '../firebase';
 
 // Interfaces for recruiter structures
@@ -88,7 +93,7 @@ export interface RecruiterJob {
 }
 
 interface RecruiterHomeScreenProps {
-  userData: { name?: string; email: string; companyName?: string };
+  userData: { uid?: string; name?: string; email: string; companyName?: string; role?: string };
   onLogout: () => void;
   onNavigateToCompanySetup?: () => void;
 }
@@ -730,6 +735,34 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
   const [drawerChatHistory, setDrawerChatHistory] = useState<{ sender: 'recruiter' | 'ai'; text: string; timestamp: Date }[]>([]);
   const [drawerIsThinking, setDrawerIsThinking] = useState(false);
 
+  // Secure Direct Chat states
+  const [selectedAppIdForChat, setSelectedAppIdForChat] = useState<string | null>(null);
+  const [isMutualInterest, setIsMutualInterest] = useState(false);
+
+  // Sync / listen to mutual interest in real-time
+  useEffect(() => {
+    if (!selectedCandidateForDrawer) {
+      setIsMutualInterest(false);
+      return;
+    }
+    // Fallback if no selectedJob is active yet
+    const activeJobId = selectedJob?.id || 'job-1';
+    const candidateUid = getCandidateUid(selectedCandidateForDrawer.name);
+    const appId = `${candidateUid}_${activeJobId}`;
+    const appRef = doc(db, 'applications', appId);
+
+    const unsubscribe = onSnapshot(appRef, (docSnap: any) => {
+      if (docSnap.exists()) {
+        const appData = docSnap.data();
+        setIsMutualInterest(!!appData.chatUnlocked);
+      } else {
+        setIsMutualInterest(false);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [selectedCandidateForDrawer, selectedJob]);
+
   // Notifications
   const triggerToast = (msg: string) => {
     setToastMessage(msg);
@@ -773,7 +806,7 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
       active: activeTab === 'messages',
       onClick: () => {
         setActiveTab('messages');
-        triggerToast("Recruiter Chat Inbox (Placeholder)");
+        setSelectedAppIdForChat(null);
       }
     },
     {
@@ -1016,20 +1049,45 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
   // Toggle Shortlist action
   const handleToggleShortlist = (candidateName: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    const candidateUid = getCandidateUid(candidateName);
+    const activeJobId = selectedJob?.id || 'job-1';
+    const recruiterUid = userData.uid || auth.currentUser?.uid || 'mock-recruiter-uid';
+
     if (shortlistedNames.includes(candidateName)) {
       setShortlistedNames(prev => prev.filter(name => name !== candidateName));
       triggerToast(`Removed ${candidateName} from shortlist`);
+      
+      syncApplicationState(candidateUid, recruiterUid, activeJobId, {
+        recruiterShortlisted: false
+      }).catch(err => console.error("Error syncing shortlist status:", err));
     } else {
       setShortlistedNames(prev => [...prev, candidateName]);
       // If candidate was in passed names, remove them
       setPassedNames(prev => prev.filter(name => name !== candidateName));
       triggerToast(`Shortlisted ${candidateName}!`);
+
+      // Find candidate avatar
+      const candObj = (selectedJob ? selectedJob.topCandidates : CANDIDATES_POOL).find(c => c.name === candidateName);
+
+      syncApplicationState(candidateUid, recruiterUid, activeJobId, {
+        recruiterShortlisted: true,
+        candidateName: candidateName,
+        candidateAvatarUrl: candObj?.avatarUrl || '',
+        recruiterName: userData.name || 'Elena Rostova',
+        recruiterAvatarUrl: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&h=150&fit=crop&crop=face',
+        jobTitle: selectedJob?.title || 'Staff React Engineer',
+        companyName: selectedJob?.companyName || 'Quantum Dynamics'
+      }).catch(err => console.error("Error syncing shortlist status:", err));
     }
   };
 
   // Toggle Pass action
   const handleTogglePass = (candidateName: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    const candidateUid = getCandidateUid(candidateName);
+    const activeJobId = selectedJob?.id || 'job-1';
+    const recruiterUid = userData.uid || auth.currentUser?.uid || 'mock-recruiter-uid';
+
     if (passedNames.includes(candidateName)) {
       setPassedNames(prev => prev.filter(name => name !== candidateName));
       triggerToast(`Restored profile of ${candidateName}`);
@@ -1038,6 +1096,10 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
       // If candidate was shortlisted, remove them
       setShortlistedNames(prev => prev.filter(name => name !== candidateName));
       triggerToast(`Passed profile: ${candidateName}`);
+
+      syncApplicationState(candidateUid, recruiterUid, activeJobId, {
+        recruiterShortlisted: false
+      }).catch(err => console.error("Error syncing pass status:", err));
     }
   };
 
@@ -1073,8 +1135,29 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 relative z-10">
 
-        {/* --- ROUTING SWITCH --- */}
-        <AnimatePresence mode="wait">
+        {activeTab === 'messages' ? (
+          <motion.div
+            key="messages-tab-recruiter"
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -15 }}
+            transition={{ duration: 0.3 }}
+            className="w-full"
+          >
+            <PrivateChat
+              currentUserId={userData.uid || auth.currentUser?.uid || 'mock-recruiter-uid'}
+              currentRole="recruiter"
+              userName={userData.name || 'Anonymous Recruiter'}
+              initialSelectedAppId={selectedAppIdForChat || undefined}
+              onBackToHome={() => {
+                setActiveTab('home');
+                setActiveView('home');
+                setSelectedAppIdForChat(null);
+              }}
+            />
+          </motion.div>
+        ) : (
+          <AnimatePresence mode="wait">
           {activeView === 'home' ? (
             
             /* ==================== SCREEN A: RECRUITER HOME ==================== */
@@ -2654,6 +2737,7 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
             </motion.div>
           )}
         </AnimatePresence>
+        )}
 
       </main>
 
@@ -3116,6 +3200,33 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                         )}
                       </button>
                     </div>
+
+                    {/* Mutual Interest Message Button */}
+                    <AnimatePresence>
+                      {isMutualInterest && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0, marginTop: 0 }}
+                          animate={{ opacity: 1, height: 'auto', marginTop: 12 }}
+                          exit={{ opacity: 0, height: 0, marginTop: 0 }}
+                          className="overflow-hidden"
+                        >
+                          <button
+                            onClick={() => {
+                              const candidateUid = getCandidateUid(cand.name);
+                              const activeJobId = selectedJob?.id || 'job-1';
+                              setSelectedAppIdForChat(`${candidateUid}_${activeJobId}`);
+                              setActiveTab('messages');
+                              setSelectedCandidateForDrawer(null);
+                              triggerToast(`Opening private chat with ${cand.name}...`);
+                            }}
+                            className="w-full py-3 bg-accent-purple hover:bg-accent-purple/90 text-white rounded-2xl text-xs font-extrabold shadow-warm-md transition-all cursor-pointer flex items-center justify-center gap-2 border border-accent-purple/10 hover:scale-[1.01]"
+                          >
+                            <MessageSquare className="w-4 h-4" />
+                            <span>Message {cand.name.split(' ')[0]}</span>
+                          </button>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
 
                   </div>
 

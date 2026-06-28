@@ -19,7 +19,12 @@ import {
   serverTimestamp as realServerTimestamp,
   collection as realCollection,
   addDoc as realAddDoc,
-  getDocs as realGetDocs
+  getDocs as realGetDocs,
+  query as realQuery,
+  where as realWhere,
+  orderBy as realOrderBy,
+  limit as realLimit,
+  onSnapshot as realOnSnapshot
 } from 'firebase/firestore';
 import {
   getStorage,
@@ -294,6 +299,19 @@ export const getDoc = async (docRef: any) => {
   }
 };
 
+// --- MOCK SNAPSHOT LISTENERS SYSTEM ---
+const dbListeners = new Set<(path: string) => void>();
+
+const notifyDbChange = (path: string) => {
+  dbListeners.forEach((listener) => {
+    try {
+      listener(path);
+    } catch (e) {
+      console.error("Error notifying DB listener", e);
+    }
+  });
+};
+
 export const setDoc = async (docRef: any, data: any, options?: { merge?: boolean }) => {
   if (useMock) {
     const key = MOCK_FIRESTORE_PREFIX + docRef.path;
@@ -304,6 +322,7 @@ export const setDoc = async (docRef: any, data: any, options?: { merge?: boolean
       finalData = { ...existing, ...data };
     }
     localStorage.setItem(key, JSON.stringify(finalData));
+    notifyDbChange(docRef.path);
     return;
   } else {
     try {
@@ -321,6 +340,7 @@ export const updateDoc = async (docRef: any, data: any) => {
     const existing = existingRaw ? JSON.parse(existingRaw) : {};
     const finalData = { ...existing, ...data };
     localStorage.setItem(key, JSON.stringify(finalData));
+    notifyDbChange(docRef.path);
     return;
   } else {
     try {
@@ -407,6 +427,7 @@ export const addDoc = async (collectionRef: any, data: any) => {
     const docPath = `${collectionRef.path}/${generatedId}`;
     const key = MOCK_FIRESTORE_PREFIX + docPath;
     localStorage.setItem(key, JSON.stringify(data));
+    notifyDbChange(collectionRef.path);
     return {
       id: generatedId,
       path: docPath
@@ -452,23 +473,59 @@ export const uploadCompanyLogo = async (companyId: string, file: File): Promise<
 
 export const getDocs = async (collectionRef: any) => {
   if (useMock) {
-    const docs: any[] = [];
+    let docs: any[] = [];
     const prefix = MOCK_FIRESTORE_PREFIX + collectionRef.path + '/';
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       if (key && key.startsWith(prefix)) {
-        const id = key.substring(prefix.length);
+        const remaining = key.substring(prefix.length);
+        // Ensure we only match immediate children (avoid nested subcollections matching flat listing)
+        if (remaining.includes('/') && !collectionRef.path.includes('/messages')) {
+          continue;
+        }
+        const id = remaining;
         const raw = localStorage.getItem(key);
         if (raw) {
           const data = JSON.parse(raw);
           docs.push({
             id,
+            path: collectionRef.path + '/' + id,
             data: () => data,
             exists: () => true
           });
         }
       }
     }
+
+    // Apply mock queries if present
+    if (collectionRef.queries) {
+      for (const q of collectionRef.queries) {
+        if (q.type === 'where') {
+          docs = docs.filter(d => {
+            const val = d.data()[q.field];
+            if (q.operator === '==') return val === q.value;
+            if (q.operator === 'array-contains') return Array.isArray(val) && val.includes(q.value);
+            return true;
+          });
+        }
+      }
+      const orderByQ = collectionRef.queries.find((q: any) => q.type === 'orderBy');
+      if (orderByQ) {
+        docs.sort((a, b) => {
+          const valA = a.data()[orderByQ.field];
+          const valB = b.data()[orderByQ.field];
+          if (valA === undefined || valB === undefined) return 0;
+          if (valA < valB) return orderByQ.direction === 'desc' ? 1 : -1;
+          if (valA > valB) return orderByQ.direction === 'desc' ? -1 : 1;
+          return 0;
+        });
+      }
+      const limitQ = collectionRef.queries.find((q: any) => q.type === 'limit');
+      if (limitQ) {
+        docs = docs.slice(0, limitQ.value);
+      }
+    }
+
     return {
       empty: docs.length === 0,
       forEach: (callback: (doc: any) => void) => {
@@ -482,6 +539,81 @@ export const getDocs = async (collectionRef: any) => {
     } catch (error) {
       handleFirestoreError(error, 'getDocs', collectionRef.path || null);
     }
+  }
+};
+
+export const query = (ref: any, ...queryConstraints: any[]) => {
+  if (useMock) {
+    return {
+      _isMockRef: true,
+      path: ref.path,
+      queries: queryConstraints
+    };
+  } else {
+    return realQuery(ref, ...queryConstraints);
+  }
+};
+
+export const where = (field: string, operator: string, value: any) => {
+  if (useMock) {
+    return { type: 'where', field, operator, value };
+  } else {
+    return realWhere(field, operator as any, value);
+  }
+};
+
+export const orderBy = (field: string, direction: 'asc' | 'desc' = 'asc') => {
+  if (useMock) {
+    return { type: 'orderBy', field, direction };
+  } else {
+    return realOrderBy(field, direction);
+  }
+};
+
+export const limit = (value: number) => {
+  if (useMock) {
+    return { type: 'limit', value };
+  } else {
+    return realLimit(value);
+  }
+};
+
+export const onSnapshot = (ref: any, callback: (snapshot: any) => void, errorCallback?: (error: any) => void) => {
+  if (useMock) {
+    const triggerCallback = async () => {
+      try {
+        if (ref._isMockRef && ref.path.split('/').length % 2 === 0 && !ref.queries) {
+          const snap = await getDoc(ref);
+          callback(snap);
+        } else {
+          const snap = await getDocs(ref);
+          callback(snap);
+        }
+      } catch (err) {
+        if (errorCallback) errorCallback(err);
+      }
+    };
+
+    triggerCallback();
+
+    const listener = (changedPath: string) => {
+      if (changedPath.startsWith(ref.path)) {
+        triggerCallback();
+      }
+    };
+
+    dbListeners.add(listener);
+    return () => {
+      dbListeners.delete(listener);
+    };
+  } else {
+    return realOnSnapshot(ref, callback, (error) => {
+      if (errorCallback) {
+        errorCallback(error);
+      } else {
+        handleFirestoreError(error, 'onSnapshot', ref.path || null);
+      }
+    });
   }
 };
 
