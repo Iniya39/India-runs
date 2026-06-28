@@ -26,6 +26,7 @@ import { Card } from '../components/Card';
 import { Badge } from '../components/Badge';
 import { Avatar } from '../components/Avatar';
 import { BackgroundBlob } from '../components/BackgroundBlobs';
+import { CandidateHomeScreen } from './CandidateHomeScreen';
 
 export interface DashboardScreenProps {
   role: 'candidate' | 'recruiter';
@@ -43,6 +44,16 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   onEditProfile,
 }) => {
   const isCandidate = role === 'candidate';
+
+  if (isCandidate) {
+    return (
+      <CandidateHomeScreen
+        userData={userData}
+        onLogout={onLogout}
+        onNavigateToProfile={onEditProfile || (() => {})}
+      />
+    );
+  }
 
   // Realistic mock data for Candidate
   const candidateMatches = [

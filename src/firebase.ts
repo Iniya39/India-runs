@@ -16,7 +16,10 @@ import {
   getDoc as realGetDoc, 
   setDoc as realSetDoc, 
   updateDoc as realUpdateDoc, 
-  serverTimestamp as realServerTimestamp 
+  serverTimestamp as realServerTimestamp,
+  collection as realCollection,
+  addDoc as realAddDoc,
+  getDocs as realGetDocs
 } from 'firebase/firestore';
 import {
   getStorage,
@@ -386,3 +389,99 @@ export const uploadProfilePhoto = async (uid: string, file: File): Promise<strin
     }
   }
 };
+
+export const collection = (dbInstance: any, collectionPath: string) => {
+  if (useMock) {
+    return {
+      _isMockRef: true,
+      path: collectionPath
+    };
+  } else {
+    return realCollection(dbInstance, collectionPath);
+  }
+};
+
+export const addDoc = async (collectionRef: any, data: any) => {
+  if (useMock) {
+    const generatedId = crypto.randomUUID();
+    const docPath = `${collectionRef.path}/${generatedId}`;
+    const key = MOCK_FIRESTORE_PREFIX + docPath;
+    localStorage.setItem(key, JSON.stringify(data));
+    return {
+      id: generatedId,
+      path: docPath
+    };
+  } else {
+    try {
+      return await realAddDoc(collectionRef, data);
+    } catch (error) {
+      handleFirestoreError(error, 'add', collectionRef.path || null);
+    }
+  }
+};
+
+export const uploadCompanyLogo = async (companyId: string, file: File): Promise<string> => {
+  if (useMock) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        if (typeof reader.result === 'string') {
+          resolve(reader.result);
+        } else {
+          reject(new Error("Failed to read file as data URL"));
+        }
+      };
+      reader.onerror = () => {
+        reject(new Error("File reading error"));
+      };
+      reader.readAsDataURL(file);
+    });
+  } else {
+    try {
+      const path = `companyLogos/${companyId}/${file.name}`;
+      const fileRef = realStorageRef(realStorageInstance, path);
+      const snapshot = await realUploadBytes(fileRef, file);
+      const downloadUrl = await realGetDownloadURL(snapshot.ref);
+      return downloadUrl;
+    } catch (error) {
+      console.error("Storage Upload Error: ", error);
+      throw error;
+    }
+  }
+};
+
+export const getDocs = async (collectionRef: any) => {
+  if (useMock) {
+    const docs: any[] = [];
+    const prefix = MOCK_FIRESTORE_PREFIX + collectionRef.path + '/';
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(prefix)) {
+        const id = key.substring(prefix.length);
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          const data = JSON.parse(raw);
+          docs.push({
+            id,
+            data: () => data,
+            exists: () => true
+          });
+        }
+      }
+    }
+    return {
+      empty: docs.length === 0,
+      forEach: (callback: (doc: any) => void) => {
+        docs.forEach(callback);
+      },
+      docs
+    };
+  } else {
+    try {
+      return await realGetDocs(collectionRef);
+    } catch (error) {
+      handleFirestoreError(error, 'getDocs', collectionRef.path || null);
+    }
+  }
+};
+
