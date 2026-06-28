@@ -29,7 +29,7 @@ import {
   updateProfile, 
   signInWithPopup, 
   GoogleAuthProvider 
-} from '../firebase';
+} from '../supabase';
 
 export interface AuthScreenProps {
   onSuccessSignup: (userData: { name: string; email: string }) => void;
@@ -210,7 +210,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
       case 'auth/too-many-requests':
         return 'Too many attempts. Please try again later.';
       default:
-        return 'An error occurred during authentication. Please try again.';
+        return code || 'An error occurred during authentication. Please try again.';
     }
   };
 

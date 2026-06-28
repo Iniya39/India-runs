@@ -41,7 +41,8 @@ import {
   Github,
   Star,
   Pencil,
-  Loader2
+  Loader2,
+  Bell
 } from 'lucide-react';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
@@ -50,7 +51,7 @@ import { Avatar } from '../components/Avatar';
 import { FloatingInfoCard } from '../components/FloatingInfoCard';
 import { NavBar, NavLinkItem } from '../components/NavBar';
 import { PrivateChat } from '../components/PrivateChat';
-import { syncApplicationState, getCandidateUid } from '../lib/chatUtils';
+import { syncApplicationState } from '../lib/chatUtils';
 import { 
   db, 
   auth, 
@@ -60,8 +61,108 @@ import {
   serverTimestamp,
   onSnapshot,
   doc,
-  getDoc
-} from '../firebase';
+  getDoc,
+  supabase
+} from '../supabase';
+
+const convertToINR = (amount: number, fromCurrency: string): number => {
+  const parsed = Number(amount);
+  if (isNaN(parsed)) return 0;
+  switch (fromCurrency) {
+    case 'USD':
+      return parsed * 83;
+    case 'EUR':
+      return parsed * 90;
+    case 'GBP':
+      return parsed * 105;
+    default:
+      return parsed;
+  }
+};
+
+const calculateHybridMatchScore = (cand: any, job: any) => {
+  const jobTags = job.tags || [];
+  
+  // 1. Semantic Similarity (40% weight)
+  const clean = (txt: string) => txt.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 3);
+  const candWords = new Set(clean(`${cand.title || ''} ${cand.pitch || ''} ${JSON.stringify(cand.rawProfile?.experience || '')}`));
+  const jobWords = new Set(clean(`${job.title || ''} ${job.description || ''}`));
+  let intersection = 0;
+  for (const w of candWords) {
+    if (jobWords.has(w)) intersection++;
+  }
+  const union = Math.max(1, candWords.size + jobWords.size - intersection);
+  const jaccard = intersection / union;
+  const semanticScore = Math.min(100, Math.round(60 + jaccard * 120));
+
+  // 2. Skills Match (25% weight)
+  const matchedSkills = jobTags.filter((tag: string) => 
+    cand.skills && cand.skills.some((skill: string) => skill.toLowerCase().includes(tag.toLowerCase()) || tag.toLowerCase().includes(skill.toLowerCase()))
+  );
+  const skillsScore = jobTags.length > 0 ? Math.round((matchedSkills.length / jobTags.length) * 100) : 80;
+
+  // 3. Experience Match (15% weight)
+  const getRequiredExp = (lvl: string) => {
+    const l = lvl.toLowerCase();
+    if (l.includes('entry') || l.includes('junior')) return 1;
+    if (l.includes('mid')) return 3;
+    if (l.includes('senior')) return 5;
+    if (l.includes('lead') || l.includes('manager')) return 8;
+    return 3;
+  };
+  const reqExp = getRequiredExp(job.experienceLevel || '');
+  const candExpNum = parseInt(cand.experience) || 0;
+  const expScore = candExpNum >= reqExp ? 100 : Math.round((candExpNum / reqExp) * 100);
+
+  // 4. Projects Match (10% weight)
+  const projects = cand.rawProfile?.projects || [];
+  let projectScore = 50;
+  if (projects.length > 0) {
+    projectScore += 30;
+    const hasKeywordMatch = projects.some((p: any) => 
+      (p.description || '').toLowerCase().split(/\s+/).some((w: string) => 
+        (job.title || '').toLowerCase().includes(w) || (job.description || '').toLowerCase().includes(w)
+      )
+    );
+    if (hasKeywordMatch) projectScore += 20;
+  }
+
+  // 5. Education Match (5% weight)
+  const edu = cand.rawProfile?.education || [];
+  const eduScore = edu.length > 0 ? 100 : 70;
+
+  // 6. Certifications & Verification Match (5% weight)
+  const certsScore = cand.isVerified ? 100 : 70;
+
+  // Weighted Final Score
+  const finalScore = Math.round(
+    semanticScore * 0.40 +
+    skillsScore * 0.25 +
+    expScore * 0.15 +
+    projectScore * 0.10 +
+    eduScore * 0.05 +
+    certsScore * 0.05
+  );
+
+  const whyMatched = [
+    `Semantic Match: ${semanticScore}%`,
+    `Skills Score: ${skillsScore}%`,
+    `Experience: ${cand.experience} (${expScore}%)`
+  ];
+
+  return {
+    matchScore: finalScore,
+    whyMatched,
+    matchBreakdown: {
+      semantic: semanticScore,
+      skills: skillsScore,
+      experience: expScore,
+      projects: projectScore,
+      education: eduScore,
+      certifications: certsScore
+    }
+  };
+};
 
 // Interfaces for recruiter structures
 export interface RecruiterJob {
@@ -77,6 +178,7 @@ export interface RecruiterJob {
   experienceLevel: string;
   jobType: string;
   topCandidates: {
+    id: string;
     name: string;
     avatarUrl: string;
     title: string;
@@ -89,6 +191,7 @@ export interface RecruiterJob {
     isVerified?: boolean;
     whyMatched?: string[];
     recentlyActive?: boolean;
+    rawProfile?: any;
   }[];
 }
 
@@ -98,466 +201,42 @@ interface RecruiterHomeScreenProps {
   onNavigateToCompanySetup?: () => void;
 }
 
-// Sample candidates with realistic seed avatars and matching fields
-const CANDIDATES_POOL = [
-  {
-    name: 'Alex Rivera',
-    avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&h=150&fit=crop&crop=face',
-    title: 'Senior Front-End Architect',
-    matchScore: 98,
-    skills: ['React 19', 'Tailwind v4', 'Vite', 'TypeScript'],
-    experience: '8 years',
-    location: 'SF / Remote',
-    desiredSalary: '$195,000',
-    pitch: 'Specializes in high-fidelity animations, micro-frontends, and rapid developer tooling. Active seeker.',
-    isVerified: true,
-    whyMatched: ['8 yrs React', 'Verified GitHub', 'System scaling expert'],
-    recentlyActive: false
-  },
-  {
-    name: 'Sarah Chen',
-    avatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&h=150&fit=crop&crop=face',
-    title: 'Lead Product Developer',
-    matchScore: 95,
-    skills: ['Next.js', 'PostgreSQL', 'AI Prompt Engineering', 'TypeScript'],
-    experience: '6 years',
-    location: 'Fully Remote',
-    desiredSalary: '$200,000',
-    pitch: 'Full-stack builder who ran product at YC backed developer workspace startup. Prefers remote.',
-    isVerified: true,
-    whyMatched: ['6 yrs exp', 'Next.js expert', 'AI Prompt certified'],
-    recentlyActive: true
-  },
-  {
-    name: 'Marcus Brody',
-    avatarUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&h=150&fit=crop&crop=face',
-    title: 'Staff UI Engineer',
-    matchScore: 92,
-    skills: ['React', 'Framer Motion', 'Tailwind', 'CSS Canvases'],
-    experience: '9 years',
-    location: 'Austin, TX',
-    desiredSalary: '$185,000',
-    pitch: 'Obsessed with fluid interfaces and micro-interactions. Created popular open-source layouts.',
-    isVerified: true,
-    whyMatched: ['9 yrs exp', 'Verified GitHub', 'Framer Motion guru'],
-    recentlyActive: false
-  },
-  {
-    name: 'Emily Watson',
-    avatarUrl: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=150&h=150&fit=crop&crop=face',
-    title: 'Senior Product Engineer',
-    matchScore: 89,
-    skills: ['Next.js', 'GraphQL', 'Node.js', 'Vite'],
-    experience: '7 years',
-    location: 'Fully Remote',
-    desiredSalary: '$175,000',
-    pitch: 'Passionate about bridging visual design and bulletproof server architecture.',
-    isVerified: false,
-    whyMatched: ['7 yrs exp', 'Next.js architecture', 'Lead 2 design systems'],
-    recentlyActive: true
-  },
-  {
-    name: 'Jordan Miller',
-    avatarUrl: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face',
-    title: 'Full-Stack React Developer',
-    matchScore: 84,
-    skills: ['React', 'Node.js', 'Tailwind', 'Firebase'],
-    experience: '5 years',
-    location: 'New York, NY',
-    desiredSalary: '$150,000',
-    pitch: 'Fast-paced developer with strong focus on clean state engines and SaaS delivery.',
-    isVerified: false,
-    whyMatched: ['5 yrs exp', 'Vetted project history', 'Tailwind power-user'],
-    recentlyActive: true
-  }
-];
-
-const DEFAULT_RECRUITER_JOBS: RecruiterJob[] = [
-  {
-    id: 'rec-job-1',
-    title: 'Staff React Engineer',
-    postedDate: 'Posted 2 days ago',
-    status: 'Active',
-    applicantsCount: 24,
-    tags: ['React 19', 'Next.js', 'Distributed Systems'],
-    description: 'Lead front-end scaling efforts for our next-generation visual automation designer. Build responsive component systems that sync in real-time.',
-    salary: '$195,000 - $220,000',
-    location: 'SF / Remote',
-    experienceLevel: 'Senior',
-    jobType: 'Full-time',
-    topCandidates: [
-      CANDIDATES_POOL[0], // Alex Rivera
-      CANDIDATES_POOL[1], // Sarah Chen
-      CANDIDATES_POOL[2], // Marcus Brody
-      CANDIDATES_POOL[3], // Emily Watson
-    ]
-  },
-  {
-    id: 'rec-job-2',
-    title: 'Senior Front-End Architect',
-    postedDate: 'Posted 5 days ago',
-    status: 'Active',
-    applicantsCount: 12,
-    tags: ['Tailwind v4', 'Vite', 'TypeScript'],
-    description: 'Architect a blisteringly fast multi-tenant dashboard system. Focus heavily on layout animations, rendering efficiency, and flawless visual typography.',
-    salary: '$180,000 - $205,000',
-    location: 'Fully Remote',
-    experienceLevel: 'Senior',
-    jobType: 'Full-time',
-    topCandidates: [
-      CANDIDATES_POOL[1], // Sarah Chen
-      CANDIDATES_POOL[2], // Marcus Brody
-      CANDIDATES_POOL[3], // Emily Watson
-    ]
-  },
-  {
-    id: 'rec-job-3',
-    title: 'Product Engineer (AI Systems)',
-    postedDate: 'Posted 2 weeks ago',
-    status: 'Closed',
-    applicantsCount: 45,
-    tags: ['Next.js', 'Generative AI', 'PostgreSQL'],
-    description: 'Integrate multi-modal LLM features directly into the core workflow interface. Work closely with product designers to map raw models to delightful tools.',
-    salary: '$160,000 - $190,000',
-    location: 'Austin, TX',
-    experienceLevel: 'Senior',
-    jobType: 'Full-time',
-    topCandidates: [
-      CANDIDATES_POOL[0], // Alex Rivera
-      CANDIDATES_POOL[1], // Sarah Chen
-      CANDIDATES_POOL[3], // Emily Watson
-      CANDIDATES_POOL[4], // Jordan Miller
-    ]
-  }
-];
-
-const CANDIDATE_DETAILED_INFO: Record<string, {
-  education: { school: string; degree: string; dates: string }[];
-  experience: { company: string; role: string; dates: string; description: string }[];
-  projects: { title: string; description: string; demoUrl?: string; role: string; tags: string[] }[];
-  githubSummary: { status: string; repos: number; summary: string };
-  whyMatchedExpanded: string[];
-  cannedResponses: Record<string, string>;
-  defaultResponse: string;
-}> = {
-  'Alex Rivera': {
-    whyMatchedExpanded: [
-      '✓ 8 years of React experience (exceeds senior requirement of 5+ years)',
-      '✓ Active GitHub profile with 14 connected repositories and daily contributions',
-      '✓ Designed and scaled micro-frontends at Stripe, improving compile times by 40%',
-      '✓ Highly active candidate, currently open to immediate onboarding'
-    ],
-    experience: [
-      {
-        company: 'Stripe',
-        role: 'Senior Front-End Architect',
-        dates: '2021 - Present',
-        description: 'Led core dashboard architecture scaling. Created internal design tokens parser and migrated 4 legacy apps to React 18 & Vite. Mentored 6 junior devs.'
-      },
-      {
-        company: 'Vercel',
-        role: 'Core UI Engineer',
-        dates: '2019 - 2021',
-        description: 'Co-developed key performance optimization tools for Next.js middleware. Focused on high-fidelity animations and developer tools.'
-      },
-      {
-        company: 'Airbnb',
-        role: 'Software Engineer (Frontend)',
-        dates: '2017 - 2019',
-        description: 'Worked on internationalization layout rendering. Maintained internal atomic CSS utilities.'
-      }
-    ],
-    education: [
-      {
-        school: 'Stanford University',
-        degree: 'B.S. in Computer Science',
-        dates: '2013 - 2017'
-      }
-    ],
-    projects: [
-      {
-        title: 'Framer Motion Pro layouts',
-        description: 'Open-source layouts for fluid dashboards with auto-responsive layouts.',
-        role: 'Creator & Maintainer',
-        demoUrl: 'https://github.com/alexrivera/framer-motion-layouts',
-        tags: ['React', 'Framer Motion', 'Vite']
-      },
-      {
-        title: 'Vite-Plugin-Bundle-Analyzer',
-        description: 'A tool to visually audit micro-frontends bundle sizes in web worker environments.',
-        role: 'Author',
-        demoUrl: 'https://github.com/alexrivera/vite-plugin-bundle',
-        tags: ['TypeScript', 'Vite', 'Build Tools']
-      }
-    ],
-    githubSummary: {
-      status: 'Connected',
-      repos: 14,
-      summary: '14 active repositories analyzed. Outstanding contributions to Framer Motion and Vite ecosystem. Strong daily activity in the last 6 months.'
-    },
-    cannedResponses: {
-      'How many years of React experience?': 'Alex has 8 years of deep React experience, spanning from early class components to modern React 19 concurrent features. He specializes in performance optimization and design systems.',
-      'What certifications does this candidate have?': 'Alex has a B.S. in Computer Science from Stanford University and has spoken at React Conf on advanced micro-frontends.',
-      'Summarize their project experience': 'Alex has built open-source tools with millions of downloads, including Vercel utility kits and advanced Framer Motion layouts. His work is characterized by exceptional visual polish and speed.'
-    },
-    defaultResponse: "Alex Rivera is a top-tier frontend architect with deep expertise in UI engineering. According to his parsed portfolio, he would be an excellent fit for scaling complex UI systems."
-  },
-  'Sarah Chen': {
-    whyMatchedExpanded: [
-      '✓ 6 years of product development experience at high-growth startups',
-      '✓ Next.js expert with extensive full-stack PostgreSQL and AI model integrations',
-      '✓ Former founding engineer and product lead at a YC-backed developer workspace startup',
-      '✓ Exceptional scores on prompt engineering and full-stack architecture reviews'
-    ],
-    experience: [
-      {
-        company: 'Linear Space (YC S21)',
-        role: 'Lead Product Developer & Founding Engineer',
-        dates: '2021 - 2024',
-        description: 'Built core real-time collaborative workspace canvas from scratch using Next.js and WebSockets. Oversaw database layout migrations and vector search pipelines.'
-      },
-      {
-        company: 'Retool',
-        role: 'Full-Stack Developer',
-        dates: '2019 - 2021',
-        description: 'Developed critical drag-and-drop workflow components. Integrated third-party integrations engine and improved query editor load speeds.'
-      }
-    ],
-    education: [
-      {
-        school: 'UC Berkeley',
-        degree: 'B.S. in Electrical Engineering & Computer Sciences (EECS)',
-        dates: '2015 - 2019'
-      }
-    ],
-    projects: [
-      {
-        title: 'PromptFlow AI',
-        description: 'Visual playground for testing and versioning generative LLM pipelines.',
-        role: 'Solo Developer',
-        demoUrl: 'https://github.com/sarahchen/promptflow',
-        tags: ['Next.js', 'PostgreSQL', 'AI']
-      },
-      {
-        title: 'SyncState-WS',
-        description: 'Ultralight real-time collaborative canvas state sync library using custom WebSockets.',
-        role: 'Creator',
-        demoUrl: 'https://github.com/sarahchen/syncstate',
-        tags: ['TypeScript', 'WebSockets']
-      }
-    ],
-    githubSummary: {
-      status: 'Connected',
-      repos: 28,
-      summary: '28 active repositories. High activity in vector embeddings and local LLM integrations. Frequent contributor to LangChain.'
-    },
-    cannedResponses: {
-      'How many years of React experience?': 'Sarah has 6 years of experience building modern React and Next.js applications, with a heavy focus on complex local states and rich, interactive canvas layers.',
-      'What certifications does this candidate have?': 'Sarah holds an EECS degree from UC Berkeley and is certified in Advanced Machine Learning and LLM Engineering.',
-      'Summarize their project experience': 'Sarah has built full visual playgrounds for generative AI, high-throughput WebSocket sync engines, and led product engineering at a YC startup. She bridges robust backend structures with beautiful frontend designs.'
-    },
-    defaultResponse: "Sarah Chen is a highly versatile product developer. She is excellent at translating nebulous AI and database requirements into clean, production-grade web interfaces."
-  },
-  'Marcus Brody': {
-    whyMatchedExpanded: [
-      '✓ 9 years of pure visual engineering and UI systems development',
-      '✓ Absolute master of Framer Motion, CSS Canvas rendering, and micro-interactions',
-      '✓ Well-known open-source layout creator with multiple viral Tailwind templates',
-      '✓ Strong background scaling frontends for interactive enterprise software'
-    ],
-    experience: [
-      {
-        company: 'Figma',
-        role: 'Staff UI Engineer',
-        dates: '2020 - Present',
-        description: 'Led UI revitalization for the community sharing portal. Built custom spring-physics layout engines and visual components. Reduced bundle size by 30%.'
-      },
-      {
-        company: 'Webflow',
-        role: 'Senior Interaction Engineer',
-        dates: '2017 - 2020',
-        description: 'Designed and built the core interaction builder interface. Created reusable physics-based visual libraries.'
-      }
-    ],
-    education: [
-      {
-        school: 'Rhode Island School of Design (RISD)',
-        degree: 'BFA in Industrial Design & Digital Media',
-        dates: '2011 - 2015'
-      }
-    ],
-    projects: [
-      {
-        title: 'Springy UI',
-        description: 'Physics-based React animation engine optimized for 120Hz display refresh rates.',
-        role: 'Creator',
-        demoUrl: 'https://github.com/marcusbrody/springy-ui',
-        tags: ['React', 'Framer Motion', 'WebGL']
-      }
-    ],
-    githubSummary: {
-      status: 'Connected',
-      repos: 19,
-      summary: '19 active repositories. Significant impact on community UI frameworks. Heavy commits to animations, shaders, and creative canvas tools.'
-    },
-    cannedResponses: {
-      'How many years of React experience?': 'Marcus has 9 years of UI development experience, prioritizing highly aesthetic design engineering, layout mechanics, and animation systems.',
-      'What certifications does this candidate have?': 'Marcus holds a BFA from RISD and blends technical software architecture with high-fidelity digital design principles.',
-      'Summarize their project experience': 'Marcus created Springy UI (a performance-optimized physics-based web rendering helper) and led core interaction components at Figma and Webflow.'
-    },
-    defaultResponse: "Marcus Brody is a world-class Visual Engineer. If your application requires breathtaking animations, responsive typography, and tactile interactions, Marcus is your candidate."
-  },
-  'Emily Watson': {
-    whyMatchedExpanded: [
-      '✓ 7 years of full-stack experience bridging layout design and server architectures',
-      '✓ Built and maintained complex GraphQL APIs and scalable Next.js server routers',
-      '✓ Designed and deployed 2 complete component design systems adopted by 100+ devs',
-      '✓ Fully remote expert with excellent collaborative communication reviews'
-    ],
-    experience: [
-      {
-        company: 'Supabase',
-        role: 'Senior Product Engineer',
-        dates: '2021 - Present',
-        description: 'Built the client dashboard query editor, visual database modeler, and integrated GraphQL query interface. Managed automated testing suites.'
-      },
-      {
-        company: 'Gatsby',
-        role: 'Core Architect',
-        dates: '2019 - 2021',
-        description: 'Designed unified developer tooling templates and GraphQL data layers. Guided migrations to hybrid rendering schemas.'
-      }
-    ],
-    education: [
-      {
-        school: 'University of Washington',
-        degree: 'B.S. in Informatics',
-        dates: '2014 - 2018'
-      }
-    ],
-    projects: [
-      {
-        title: 'SchemaCraft',
-        description: 'Visual database schema generator that instantly outputs TypeScript and PostgreSQL DDL.',
-        role: 'Author',
-        demoUrl: 'https://github.com/emilywatson/schemacraft',
-        tags: ['Next.js', 'GraphQL', 'Tailwind']
-      }
-    ],
-    githubSummary: {
-      status: 'Connected',
-      repos: 22,
-      summary: '22 repositories. Strong activity in developer tools, GraphQL compilers, and static-site generating engines.'
-    },
-    cannedResponses: {
-      'How many years of React experience?': 'Emily has 7 years of full-stack engineering experience, specializing in advanced server components, GraphQL data pipelines, and database modeling dashboards.',
-      'What certifications does this candidate have?': 'Emily holds a B.S. in Informatics from UW and is an active technical writer on modern rendering topologies.',
-      'Summarize their project experience': 'Emily has engineered complex dashboard layers for Supabase, authored open-source schema parsers, and established comprehensive design systems from the ground up.'
-    },
-    defaultResponse: "Emily Watson is an outstanding Senior Product Engineer. She is exceptionally comfortable connecting intricate server schemas with clean, beautiful UI components."
-  },
-  'Jordan Miller': {
-    whyMatchedExpanded: [
-      '✓ 5 years of experience delivering high-velocity React & Tailwind apps',
-      '✓ Deep expertise in clean state management (Redux, Zustand, React Query)',
-      '✓ Proven track record with responsive, accessible visual design guidelines',
-      '✓ High-impact SaaS builder who thrives in fast-paced startup workflows'
-    ],
-    experience: [
-      {
-        company: 'Veed.io',
-        role: 'Full-Stack React Developer',
-        dates: '2022 - Present',
-        description: 'Engineered web video editor timeline controls. Leveraged Zustand for zero-latency video playhead state tracking. Scaled exports dashboard.'
-      },
-      {
-        company: 'ProductHunt',
-        role: 'Frontend Engineer',
-        dates: '2021 - 2022',
-        description: 'Optimized infinite scroll feeds and active user notifications. Re-implemented Tailwind v3 CSS migration.'
-      }
-    ],
-    education: [
-      {
-        school: 'Texas A&M University',
-        degree: 'B.S. in Computer Science',
-        dates: '2017 - 2021'
-      }
-    ],
-    projects: [
-      {
-        title: 'StateSync-Play',
-        description: 'Visual devtool for debugging complex Zustand and React Query state side-effects in real-time.',
-        role: 'Creator',
-        demoUrl: 'https://github.com/jordanmiller/statesync',
-        tags: ['Zustand', 'React', 'Tailwind']
-      }
-    ],
-    githubSummary: {
-      status: 'Connected',
-      repos: 11,
-      summary: '11 repositories. Focus on state machine visualizations, Tailwind CSS plugins, and media playhead controls.'
-    },
-    cannedResponses: {
-      'How many years of React experience?': 'Jordan has 5 years of hands-on React experience, specializing in clean state structures, performance debugging, and high-quality SaaS features.',
-      'What certifications does this candidate have?': 'Jordan has a B.S. in Computer Science from Texas A&M and is a certified Web Accessibility specialist (IAAP).',
-      'Summarize their project experience': 'Jordan engineered low-latency timing state managers at Veed.io and authored visual debuggers for Zustand. He is a productivity multiplier for startup teams.'
-    },
-    defaultResponse: "Jordan Miller is an efficient, reliable product engineer who excels in building highly interactive state-driven dashboards and SaaS workflows."
-  }
-};
-
-const getCandidateDetails = (name: string, fallbackTitle: string, fallbackExperience: string, fallbackLocation: string) => {
-  if (CANDIDATE_DETAILED_INFO[name]) {
-    return CANDIDATE_DETAILED_INFO[name];
-  }
+const buildCandidateDetails = (candidate: any) => {
+  const raw = candidate.rawProfile || {};
+  const basics = raw.basics || {};
+  const edu = raw.education || [];
+  const exp = raw.experience || [];
+  const proj = raw.projects || [];
+  
   return {
-    whyMatchedExpanded: [
-      `✓ Fully matches requirements for ${fallbackTitle}`,
-      `✓ Verified ${fallbackExperience} of industry experience`,
-      `✓ Based in or remote-friendly from ${fallbackLocation}`,
-      `✓ Demonstrates strong potential and verified technical portfolio`
-    ],
-    experience: [
-      {
-        company: 'Enterprise Solutions Inc.',
-        role: fallbackTitle || 'Senior Software Engineer',
-        dates: '2022 - Present',
-        description: 'Designed and deployed scalable front-end systems. Managed 3 internal codebases and led transition to Vite.'
-      },
-      {
-        company: 'SaaS Startup Lab',
-        role: 'Full Stack Engineer',
-        dates: '2019 - 2022',
-        description: 'Developed client-facing portal and integrated analytical dashboards. Managed state flow.'
-      }
-    ],
-    education: [
-      {
-        school: 'State University',
-        degree: 'B.S. in Computer Science',
-        dates: '2015 - 2019'
-      }
-    ],
-    projects: [
-      {
-        title: 'Dashboard Starter Pro',
-        description: 'A pre-configured frontend dashboard template focusing on strict layout mechanics.',
-        role: 'Sole Creator',
-        tags: ['React', 'TypeScript', 'Tailwind']
-      }
-    ],
-    githubSummary: {
-      status: 'Connected',
-      repos: 8,
-      summary: '8 active repositories analyzed. Consistent contribution history and tidy code formatting standards.'
-    },
+    education: edu.map((e: any) => ({
+      school: e.institution || '',
+      degree: e.degree || '',
+      dates: `${e.startYear || ''} - ${e.endYear || ''}`
+    })),
+    experience: exp.map((e: any) => ({
+      company: e.company || '',
+      role: e.role || '',
+      dates: `${e.startDate || ''} - ${e.endDate || (e.isCurrent ? 'Present' : '')}`,
+      description: e.description || ''
+    })),
+    projects: proj.map((p: any) => ({
+      title: p.title || '',
+      description: p.description || '',
+      demoUrl: p.link || '',
+      role: 'Developer',
+      tags: p.techStack || []
+    })),
+    githubSummary: raw.verification?.githubConnected 
+      ? { status: 'Connected', repos: 15, summary: `Connected GitHub account: @${raw.verification.githubUsername}` }
+      : { status: 'Not connected', repos: 0, summary: 'No GitHub profile connected.' },
+    whyMatchedExpanded: candidate.whyMatched || [],
     cannedResponses: {
-      'How many years of React experience?': `This candidate has ${fallbackExperience} of solid development experience, with a core emphasis on React ecosystem tools.`,
-      'What certifications does this candidate have?': 'Certified Scrum Developer (CSD) and holds a degree in Computer Science.',
-      'Summarize their project experience': 'Has built customizable admin dashboards, data visualizers, and state-synced web configurations.'
+      'How many years of React experience?': `${candidate.name || 'This candidate'} has ${basics.yearsExperience || 0} years of experience in the industry, currently working as a ${basics.headline || 'developer'}.`,
+      'What certifications does this candidate have?': `Holds a B.S./degree in Computer Science or related fields. GitHub verified.`,
+      'Summarize their project experience': `Has worked on multiple projects including: ${proj.map((p: any) => p.title).join(', ') || 'N/A'}.`
     },
-    defaultResponse: `This candidate is a strong contender with ${fallbackExperience} of solid experience. They show high competence in modern frontend patterns.`
+    defaultResponse: `Here is the parsed portfolio details for ${candidate.name || 'this candidate'}. They specialize in ${candidate.skills?.join(', ') || 'software development'}.`
   };
 };
 
@@ -566,13 +245,17 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
   onLogout,
   onNavigateToCompanySetup,
 }) => {
+  const currentUserId = userData.uid || auth?.currentUser?.uid || '';
   // Navigation tabs state
   const [activeTab, setActiveTab] = useState<'home' | 'candidates' | 'messages' | 'company-settings'>('home');
   const [activeView, setActiveView] = useState<'home' | 'ranking' | 'post-job'>('home');
   
   // Jobs List State
-  const [jobs, setJobs] = useState<RecruiterJob[]>(DEFAULT_RECRUITER_JOBS);
+  const [jobs, setJobs] = useState<RecruiterJob[]>([]);
   const [selectedJob, setSelectedJob] = useState<RecruiterJob | null>(null);
+  const [candidates, setCandidates] = useState<any[]>([]);
+  const [loadingJobs, setLoadingJobs] = useState(true);
+  const [loadingCandidates, setLoadingCandidates] = useState(true);
 
   // --- JOB POSTING SCREEN STATE LAYER ---
   const [jobForm, setJobForm] = useState({
@@ -585,6 +268,7 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
     description: '',
     salaryMin: '',
     salaryMax: '',
+    salaryCurrency: 'INR',
     salaryPublic: true,
     requiredSkills: [] as string[],
     aiParsedRequirements: null as {
@@ -604,6 +288,8 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
   const [editingSoftValue, setEditingSoftValue] = useState('');
   const [showSuccessAnimation, setShowSuccessAnimation] = useState(false);
   const [successAnimationType, setSuccessAnimationType] = useState<'draft' | 'post'>('post');
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [showNotifications, setShowNotifications] = useState(false);
 
   const resetJobForm = () => {
     setJobForm({
@@ -616,6 +302,7 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
       description: '',
       salaryMin: '',
       salaryMax: '',
+      salaryCurrency: 'INR',
       salaryPublic: true,
       requiredSkills: [],
       aiParsedRequirements: null,
@@ -747,7 +434,7 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
     }
     // Fallback if no selectedJob is active yet
     const activeJobId = selectedJob?.id || 'job-1';
-    const candidateUid = getCandidateUid(selectedCandidateForDrawer.name);
+    const candidateUid = selectedCandidateForDrawer.id;
     const appId = `${candidateUid}_${activeJobId}`;
     const appRef = doc(db, 'applications', appId);
 
@@ -763,11 +450,134 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
     return () => unsubscribe();
   }, [selectedCandidateForDrawer, selectedJob]);
 
+  // Listen to recruiter notifications in real-time
+  useEffect(() => {
+    if (!currentUserId) return;
+
+    const notifQuery = query(
+      collection(db, 'notifications'),
+      where('user_id', '==', currentUserId)
+    );
+
+    const unsubscribe = onSnapshot(notifQuery, (snapshot: any) => {
+      const list: any[] = [];
+      snapshot.forEach((docSnap: any) => {
+        list.push(docSnap.data());
+      });
+      list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      setNotifications(list);
+    });
+
+    return () => unsubscribe();
+  }, [currentUserId]);
+
+  const handleMarkAllNotificationsAsRead = async () => {
+    const unread = notifications.filter(n => !n.read);
+    for (const notif of unread) {
+      await updateDoc(doc(db, 'notifications', notif.id), {
+        read: true
+      });
+    }
+  };
+
+  const handleMarkNotificationAsRead = async (notifId: string) => {
+    await updateDoc(doc(db, 'notifications', notifId), {
+      read: true
+    });
+  };
+
   // Notifications
   const triggerToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
   };
+
+  // Load jobs and candidates on mount
+  useEffect(() => {
+    if (!currentUserId) return;
+
+    const fetchData = async () => {
+      setLoadingJobs(true);
+      setLoadingCandidates(true);
+      try {
+        // 1. Fetch completed candidate profiles
+        const candSnapshot = await getDocs(collection(db, 'candidateProfiles'));
+        const candList: any[] = [];
+        candSnapshot.forEach((docSnap) => {
+          const cData = docSnap.data();
+          if (cData.profileComplete) {
+            const basics = cData.basics || {};
+            const verification = cData.verification || {};
+            const skillsList = cData.skills || [];
+            
+            candList.push({
+              id: docSnap.id,
+              name: basics.fullName || 'Anonymous Candidate',
+              avatarUrl: basics.photoUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&h=150&fit=crop&crop=face',
+              title: basics.headline || 'Software Developer',
+              skills: skillsList,
+              experience: `${basics.yearsExperience || 0} years`,
+              location: basics.location || 'Remote',
+              desiredSalary: basics.employmentStatus === 'Actively interviewing' ? '$150,000+' : '$120,000+',
+              pitch: cData.experience?.[0]?.description || 'No pitch provided.',
+              isVerified: !!verification.githubConnected,
+              rawProfile: cData
+            });
+          }
+        });
+        setCandidates(candList);
+        setLoadingCandidates(false);
+
+        // 2. Fetch jobs
+        const jobsSnapshot = await getDocs(collection(db, 'jobs'));
+        const jobsList: RecruiterJob[] = [];
+        jobsSnapshot.forEach((docSnap) => {
+          const jData = docSnap.data();
+          if (jData.recruiterUid === currentUserId) {
+            // Calculate dynamic candidates match list for this job
+            const jobTags = jData.tags || [];
+            const topCandidates = candList.map(cand => {
+              const matchResult = calculateHybridMatchScore(cand, {
+                title: jData.title || '',
+                description: jData.description || '',
+                tags: jobTags,
+                experienceLevel: jData.experienceLevel || ''
+              });
+              return {
+                ...cand,
+                matchScore: matchResult.matchScore,
+                whyMatched: matchResult.whyMatched,
+                matchBreakdown: matchResult.matchBreakdown,
+                recentlyActive: true
+              };
+            }).sort((a, b) => b.matchScore - a.matchScore);
+
+            jobsList.push({
+              id: docSnap.id,
+              title: jData.title || '',
+              postedDate: jData.postedDate || 'Just now',
+              status: jData.status || 'Active',
+              applicantsCount: jData.applicantsCount || 0,
+              tags: jobTags,
+              description: jData.description || '',
+              salary: jData.salary || 'Negotiable',
+              location: jData.location || '',
+              experienceLevel: jData.experienceLevel || '',
+              jobType: jData.jobType || '',
+              topCandidates
+            });
+          }
+        });
+        setJobs(jobsList);
+      } catch (err) {
+        console.error("Error loading recruiter dashboard data:", err);
+      } finally {
+        setLoadingJobs(false);
+      }
+    };
+
+    fetchData();
+  }, [currentUserId]);
 
   // Nav bar links configuration (Recruiter style)
   const navLinks: NavLinkItem[] = [
@@ -841,17 +651,18 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
     triggerToast(`Searching AI matches for "${globalSearchQuery}"`);
   };
 
-  // Delete Job Posting (for demonstrating Empty State)
-  const handleDeleteJob = (id: string, e: React.MouseEvent) => {
+  // Delete Job Posting
+  const handleDeleteJob = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    setJobs(prev => prev.filter(job => job.id !== id));
-    triggerToast("Job posting deleted");
-  };
-
-  // Restore Default Jobs (for convenience in Empty State)
-  const handleRestoreDefaultJobs = () => {
-    setJobs(DEFAULT_RECRUITER_JOBS);
-    triggerToast("Restored demo job listings");
+    try {
+      const { error } = await supabase.from('jobs').delete().eq('id', id);
+      if (error) throw error;
+      setJobs(prev => prev.filter(job => job.id !== id));
+      triggerToast("Job posting deleted");
+    } catch (err) {
+      console.error("Error deleting job:", err);
+      triggerToast("Failed to delete job posting");
+    }
   };
 
   // Action: Open Rank candidates for specific job
@@ -882,7 +693,7 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
   };
 
   // Candidates list inside the AI Ranking Screen, filtered based on query and UI selections
-  const displayCandidates = (selectedJob ? selectedJob.topCandidates : CANDIDATES_POOL).filter(cand => {
+  const displayCandidates = (selectedJob ? selectedJob.topCandidates : candidates).filter(cand => {
     // Quick search query filter
     const matchesSearch = globalSearchQuery 
       ? cand.name.toLowerCase().includes(globalSearchQuery.toLowerCase()) ||
@@ -913,8 +724,8 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
   });
 
   // --- AI RANKING SCREEN ADVANCED FILTERING & SORTING LAYER ---
-  const activeRankingJob = selectedJob || jobs[0] || DEFAULT_RECRUITER_JOBS[0];
-  const rawRankingCandidates = activeRankingJob ? activeRankingJob.topCandidates : CANDIDATES_POOL;
+  const activeRankingJob = selectedJob || jobs[0] || null;
+  const rawRankingCandidates = activeRankingJob ? activeRankingJob.topCandidates : candidates;
 
   const filteredRankingCandidates = rawRankingCandidates.filter(cand => {
     // A. Filter by local search query: "Search candidates by name or skill"
@@ -1012,12 +823,7 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
     setDrawerIsThinking(true);
 
     // 2. Simulate smart RAG response
-    const details = getCandidateDetails(
-      selectedCandidateForDrawer.name,
-      selectedCandidateForDrawer.title,
-      selectedCandidateForDrawer.experience,
-      selectedCandidateForDrawer.location
-    );
+    const details = buildCandidateDetails(selectedCandidateForDrawer);
 
     // Let's find if we have a canned reply
     let reply = details.defaultResponse;
@@ -1047,11 +853,12 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
   const hasMoreCandidates = sortedRankingCandidates.length > paginatedCandidates.length;
 
   // Toggle Shortlist action
-  const handleToggleShortlist = (candidateName: string, e: React.MouseEvent) => {
+  const handleToggleShortlist = (cand: any, e: React.MouseEvent) => {
     e.stopPropagation();
-    const candidateUid = getCandidateUid(candidateName);
+    const candidateUid = cand.id;
+    const candidateName = cand.name;
     const activeJobId = selectedJob?.id || 'job-1';
-    const recruiterUid = userData.uid || auth.currentUser?.uid || 'mock-recruiter-uid';
+    const recruiterUid = userData.uid || auth.currentUser?.uid || '';
 
     if (shortlistedNames.includes(candidateName)) {
       setShortlistedNames(prev => prev.filter(name => name !== candidateName));
@@ -1066,27 +873,25 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
       setPassedNames(prev => prev.filter(name => name !== candidateName));
       triggerToast(`Shortlisted ${candidateName}!`);
 
-      // Find candidate avatar
-      const candObj = (selectedJob ? selectedJob.topCandidates : CANDIDATES_POOL).find(c => c.name === candidateName);
-
       syncApplicationState(candidateUid, recruiterUid, activeJobId, {
         recruiterShortlisted: true,
         candidateName: candidateName,
-        candidateAvatarUrl: candObj?.avatarUrl || '',
-        recruiterName: userData.name || 'Elena Rostova',
+        candidateAvatarUrl: cand.avatarUrl || '',
+        recruiterName: userData.name || 'Recruiter',
         recruiterAvatarUrl: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&h=150&fit=crop&crop=face',
-        jobTitle: selectedJob?.title || 'Staff React Engineer',
-        companyName: selectedJob?.companyName || 'Quantum Dynamics'
+        jobTitle: selectedJob?.title || 'Job Opening',
+        companyName: selectedJob?.companyName || 'TalentSphere'
       }).catch(err => console.error("Error syncing shortlist status:", err));
     }
   };
 
   // Toggle Pass action
-  const handleTogglePass = (candidateName: string, e: React.MouseEvent) => {
+  const handleTogglePass = (cand: any, e: React.MouseEvent) => {
     e.stopPropagation();
-    const candidateUid = getCandidateUid(candidateName);
+    const candidateUid = cand.id;
+    const candidateName = cand.name;
     const activeJobId = selectedJob?.id || 'job-1';
-    const recruiterUid = userData.uid || auth.currentUser?.uid || 'mock-recruiter-uid';
+    const recruiterUid = userData.uid || auth.currentUser?.uid || '';
 
     if (passedNames.includes(candidateName)) {
       setPassedNames(prev => prev.filter(name => name !== candidateName));
@@ -1180,23 +985,81 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                     Manage active hiring mandates, track incoming applicants, and initiate secure AI matches.
                   </p>
                 </div>
-                <div className="flex items-center gap-3">
-                  {jobs.length < DEFAULT_RECRUITER_JOBS.length && (
+                <div className="flex items-center gap-4 self-end md:self-auto">
+                  {/* Notification Center Bell */}
+                  <div className="relative">
                     <button
-                      onClick={handleRestoreDefaultJobs}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-border-warm bg-white text-xs font-bold text-text-muted hover:text-text-navy transition cursor-pointer"
-                      title="Reset demo data"
+                      onClick={() => setShowNotifications(!showNotifications)}
+                      className="p-2.5 rounded-xl bg-white border border-border-warm text-text-muted hover:text-text-navy hover:border-accent-purple transition-all shadow-warm-sm relative cursor-pointer"
                     >
-                      <RotateCcw className="w-3.5 h-3.5" />
-                      Reset Demo
+                      <Bell className="w-5 h-5" />
+                      {notifications.filter(n => !n.read).length > 0 && (
+                        <span className="absolute -top-1.5 -right-1.5 bg-accent-purple text-white text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center border-2 border-white animate-pulse">
+                          {notifications.filter(n => !n.read).length}
+                        </span>
+                      )}
                     </button>
-                  )}
+
+                    {/* Notification Dropdown Panel */}
+                    <AnimatePresence>
+                      {showNotifications && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                          className="absolute right-0 mt-2 w-80 bg-white border border-border-warm rounded-2xl shadow-warm-lg z-50 overflow-hidden"
+                        >
+                          <div className="p-4 border-b border-border-warm flex items-center justify-between bg-surface">
+                            <span className="font-sora text-xs font-bold text-text-navy">Notifications</span>
+                            {notifications.filter(n => !n.read).length > 0 && (
+                              <button
+                                onClick={handleMarkAllNotificationsAsRead}
+                                className="text-[10px] font-extrabold text-accent-purple hover:underline cursor-pointer"
+                              >
+                                Mark all as read
+                              </button>
+                            )}
+                          </div>
+                          <div className="max-h-64 overflow-y-auto divide-y divide-border-warm/50">
+                            {notifications.length === 0 ? (
+                              <div className="p-6 text-center text-text-muted text-xs font-manrope">
+                                No notifications yet.
+                              </div>
+                            ) : (
+                              notifications.map((notif) => (
+                                <div 
+                                  key={notif.id}
+                                  onClick={() => handleMarkNotificationAsRead(notif.id)}
+                                  className={`p-3.5 text-left transition-colors cursor-pointer hover:bg-surface/50 ${!notif.read ? 'bg-purple-50/30' : ''}`}
+                                >
+                                  <div className="flex justify-between items-start gap-2">
+                                    <span className={`text-[11px] font-bold ${!notif.read ? 'text-accent-purple' : 'text-text-navy'}`}>
+                                      {notif.title}
+                                    </span>
+                                    <span className="text-[9px] text-text-muted">
+                                      {new Date(notif.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    </span>
+                                  </div>
+                                  <p className="text-xs text-text-muted mt-1 leading-snug font-manrope">
+                                    {notif.message}
+                                  </p>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+
                   <div className="flex items-center gap-2 bg-purple-50 border border-accent-purple/10 px-4 py-2 rounded-2xl shadow-warm-sm">
                     <span className="relative flex h-2 w-2">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent-purple opacity-75"></span>
                       <span className="relative inline-flex rounded-full h-2 w-2 bg-accent-purple"></span>
                     </span>
-                    <span className="text-xs font-bold text-text-navy font-manrope">Hiring Engine: Active</span>
+                    <span className="font-manrope text-[11px] font-extrabold text-accent-purple tracking-wide uppercase">
+                      Live Matching Active
+                    </span>
                   </div>
                 </div>
               </div>
@@ -1353,13 +1216,6 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                     >
                       <Plus className="w-4 h-4 mr-1" />
                       Post your first job opening
-                    </Button>
-                    <Button 
-                      variant="secondary"
-                      onClick={handleRestoreDefaultJobs}
-                      className="px-4 py-2.5 text-xs font-bold border-border-warm text-text-muted hover:text-text-navy"
-                    >
-                      Restore Demo Jobs
                     </Button>
                   </div>
                 </motion.div>
@@ -1718,25 +1574,33 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                       </div>
 
                       <div className="flex items-center gap-3">
+                        <select
+                          value={jobForm.salaryCurrency || 'INR'}
+                          onChange={(e) => setJobForm(prev => ({ ...prev, salaryCurrency: e.target.value }))}
+                          className="px-2 py-2 bg-surface border border-border-warm rounded-lg font-manrope text-xs focus:outline-none focus:border-accent-purple cursor-pointer"
+                        >
+                          <option value="INR">₹ (INR)</option>
+                          <option value="USD">$ (USD)</option>
+                          <option value="EUR">€ (EUR)</option>
+                          <option value="GBP">£ (GBP)</option>
+                        </select>
                         <div className="relative flex-1">
-                          <DollarSign className="w-3.5 h-3.5 text-text-muted absolute left-2.5 top-1/2 -translate-y-1/2" />
                           <input
                             type="number"
                             placeholder="Min"
                             value={jobForm.salaryMin}
                             onChange={(e) => setJobForm(prev => ({ ...prev, salaryMin: e.target.value }))}
-                            className="w-full pl-7 pr-3 py-2 bg-surface border border-border-warm rounded-lg font-manrope text-xs focus:outline-none focus:border-accent-purple focus:ring-1 focus:ring-accent-purple transition-colors"
+                            className="w-full pl-3 pr-3 py-2 bg-surface border border-border-warm rounded-lg font-manrope text-xs focus:outline-none focus:border-accent-purple focus:ring-1 focus:ring-accent-purple transition-colors"
                           />
                         </div>
                         <span className="text-text-muted text-xs font-bold font-mono">to</span>
                         <div className="relative flex-1">
-                          <DollarSign className="w-3.5 h-3.5 text-text-muted absolute left-2.5 top-1/2 -translate-y-1/2" />
                           <input
                             type="number"
                             placeholder="Max"
                             value={jobForm.salaryMax}
                             onChange={(e) => setJobForm(prev => ({ ...prev, salaryMax: e.target.value }))}
-                            className="w-full pl-7 pr-3 py-2 bg-surface border border-border-warm rounded-lg font-manrope text-xs focus:outline-none focus:border-accent-purple focus:ring-1 focus:ring-accent-purple transition-colors"
+                            className="w-full pl-3 pr-3 py-2 bg-surface border border-border-warm rounded-lg font-manrope text-xs focus:outline-none focus:border-accent-purple focus:ring-1 focus:ring-accent-purple transition-colors"
                           />
                         </div>
                       </div>
@@ -2108,36 +1972,116 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                   <div className="flex items-center justify-between gap-4 border-t border-border-warm/30 pt-6">
                     <Button
                       variant="secondary"
-                      onClick={() => {
+                      onClick={async () => {
                         // Save as draft - requires minimal fields, status set to Draft
                         setSuccessAnimationType('draft');
                         setShowSuccessAnimation(true);
                         
-                        setTimeout(() => {
+                        try {
+                          const userRef = doc(db, 'users', currentUserId);
+                          const userSnap = await getDoc(userRef);
+                          const userDataDb = userSnap.exists() ? userSnap.data() : null;
+                          const companyId = userDataDb?.companyId;
+
+                          let companyName = 'TalentSphere';
+                          let logoUrl = '';
+                          let industry = 'Technology';
+                          let companySize = '11-50';
+
+                          if (companyId) {
+                            const companyRef = doc(db, 'companies', companyId);
+                            const companySnap = await getDoc(companyRef);
+                            if (companySnap.exists()) {
+                              const compData = companySnap.data();
+                              companyName = compData.companyName || companyName;
+                              logoUrl = compData.logoUrl || logoUrl;
+                              industry = compData.industry || industry;
+                              companySize = compData.companySize || companySize;
+                            }
+                          }
+
+                          const minINR = jobForm.salaryMin ? convertToINR(Number(jobForm.salaryMin), jobForm.salaryCurrency || 'INR') : 0;
+                          const maxINR = jobForm.salaryMax ? convertToINR(Number(jobForm.salaryMax), jobForm.salaryCurrency || 'INR') : 0;
                           const formattedSalary = jobForm.salaryMin || jobForm.salaryMax 
-                            ? `$${jobForm.salaryMin ? Number(jobForm.salaryMin).toLocaleString() : '0'} - $${jobForm.salaryMax ? Number(jobForm.salaryMax).toLocaleString() : 'Negotiable'}`
+                            ? `₹${minINR ? minINR.toLocaleString('en-IN') : '0'} - ₹${maxINR ? maxINR.toLocaleString('en-IN') : 'Negotiable'}`
                             : 'Negotiable';
 
-                          const newJob: RecruiterJob = {
-                            id: `rec-job-${Date.now()}`,
+                          const tagsList = jobForm.requiredSkills.length > 0 ? jobForm.requiredSkills : ['Draft'];
+
+                          await addDoc(collection(db, 'jobs'), {
                             title: jobForm.title || 'Untitled Draft Job',
+                            companyName,
+                            logoUrl,
+                            industry,
+                            companySize,
                             postedDate: 'Just now',
-                            status: 'Closed', // Draft status
+                            status: 'Closed',
                             applicantsCount: 0,
-                            tags: jobForm.requiredSkills.length > 0 ? jobForm.requiredSkills : ['Draft'],
+                            tags: tagsList,
                             description: jobForm.description || 'Draft description.',
                             salary: formattedSalary,
                             location: `${jobForm.location || 'Anywhere'} (${jobForm.locationType})`,
                             experienceLevel: jobForm.experienceLevel,
                             jobType: jobForm.employmentType,
-                            topCandidates: [CANDIDATES_POOL[1], CANDIDATES_POOL[2]]
-                          };
-                          
-                          setJobs(prev => [newJob, ...prev]);
+                            isReverseRecruitment: false,
+                            recruiterUid: currentUserId,
+                            createdAt: serverTimestamp()
+                          });
+
+                          // Reload jobs
+                          const jobsSnapshot = await getDocs(collection(db, 'jobs'));
+                          const jobsList: RecruiterJob[] = [];
+                          jobsSnapshot.forEach((docSnap) => {
+                            const jData = docSnap.data();
+                            if (jData.recruiterUid === currentUserId) {
+                              const jobTags = jData.tags || [];
+                              const topCandidates = candidates.map(cand => {
+                                const matchesCount = jobTags.filter((tag: string) => 
+                                  cand.skills.some((skill: string) => skill.toLowerCase().includes(tag.toLowerCase()) || tag.toLowerCase().includes(skill.toLowerCase()))
+                                ).length;
+                                
+                                const matchScore = jobTags.length > 0 
+                                  ? Math.min(100, Math.round((matchesCount / jobTags.length) * 30 + 70)) 
+                                  : 75;
+                                  
+                                const whyMatched = [
+                                  `${cand.experience} exp`,
+                                  cand.isVerified ? 'Verified GitHub' : 'GitHub profile linked',
+                                  matchesCount > 0 ? `Matches ${matchesCount} skills` : 'Strong potential'
+                                ];
+                                
+                                return {
+                                  ...cand,
+                                  matchScore,
+                                  whyMatched,
+                                  recentlyActive: true
+                                };
+                              }).sort((a, b) => b.matchScore - a.matchScore);
+
+                              jobsList.push({
+                                id: docSnap.id,
+                                title: jData.title || '',
+                                postedDate: jData.postedDate || 'Just now',
+                                status: jData.status || 'Active',
+                                applicantsCount: jData.applicantsCount || 0,
+                                tags: jobTags,
+                                description: jData.description || '',
+                                salary: jData.salary || 'Negotiable',
+                                location: jData.location || '',
+                                experienceLevel: jData.experienceLevel || '',
+                                jobType: jData.jobType || '',
+                                topCandidates
+                              });
+                            }
+                          });
+                          setJobs(jobsList);
+                        } catch (err) {
+                          console.error("Error saving draft:", err);
+                        } finally {
                           setShowSuccessAnimation(false);
                           setActiveView('home');
                           triggerToast("Draft saved successfully");
-                        }, 2500);
+                        }
                       }}
                       className="px-5 py-2.5 text-xs font-bold border-border-warm text-text-muted hover:text-text-navy cursor-pointer"
                     >
@@ -2147,15 +2091,39 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                     <Button
                       variant="primary"
                       disabled={!jobForm.title || !jobForm.employmentType || !jobForm.location || !jobForm.experienceLevel || !jobForm.description}
-                      onClick={() => {
+                      onClick={async () => {
                         // Post job
                         setSuccessAnimationType('post');
                         setShowSuccessAnimation(true);
                         
-                        setTimeout(() => {
+                        try {
+                          const userRef = doc(db, 'users', currentUserId);
+                          const userSnap = await getDoc(userRef);
+                          const userDataDb = userSnap.exists() ? userSnap.data() : null;
+                          const companyId = userDataDb?.companyId;
+
+                          let companyName = 'TalentSphere';
+                          let logoUrl = '';
+                          let industry = 'Technology';
+                          let companySize = '11-50';
+
+                          if (companyId) {
+                            const companyRef = doc(db, 'companies', companyId);
+                            const companySnap = await getDoc(companyRef);
+                            if (companySnap.exists()) {
+                              const compData = companySnap.data();
+                              companyName = compData.companyName || companyName;
+                              logoUrl = compData.logoUrl || logoUrl;
+                              industry = compData.industry || industry;
+                              companySize = compData.companySize || companySize;
+                            }
+                          }
+
+                          const minINR = jobForm.salaryMin ? convertToINR(Number(jobForm.salaryMin), jobForm.salaryCurrency || 'INR') : 0;
+                          const maxINR = jobForm.salaryMax ? convertToINR(Number(jobForm.salaryMax), jobForm.salaryCurrency || 'INR') : 0;
                           const formattedSalary = jobForm.salaryMin || jobForm.salaryMax 
                             ? (jobForm.salaryPublic 
-                                ? `$${jobForm.salaryMin ? Number(jobForm.salaryMin).toLocaleString() : '0'} - $${jobForm.salaryMax ? Number(jobForm.salaryMax).toLocaleString() : 'Negotiable'}`
+                                ? `₹${minINR ? minINR.toLocaleString('en-IN') : '0'} - ₹${maxINR ? maxINR.toLocaleString('en-IN') : 'Negotiable'}`
                                 : 'Not displayed publicly')
                             : 'Negotiable';
 
@@ -2163,17 +2131,13 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                             ? jobForm.requiredSkills 
                             : (jobForm.aiParsedRequirements ? jobForm.aiParsedRequirements.hardRequirements.slice(0, 3) : ['Full-Stack']);
 
-                          const matchedCandidates = CANDIDATES_POOL.filter(cand => 
-                            cand.skills.some(sk => tagsList.includes(sk))
-                          );
-                          const finalMatches = matchedCandidates.length > 0 
-                            ? matchedCandidates 
-                            : [CANDIDATES_POOL[0], CANDIDATES_POOL[1]];
-
-                          const newJob: RecruiterJob = {
-                            id: `rec-job-${Date.now()}`,
+                          await addDoc(collection(db, 'jobs'), {
                             title: jobForm.title,
-                            postedDate: 'Just now',
+                            companyName,
+                            logoUrl,
+                            industry,
+                            companySize,
+                            postedDate: 'Today',
                             status: 'Active',
                             applicantsCount: 0,
                             tags: tagsList,
@@ -2182,14 +2146,65 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                             location: `${jobForm.location} (${jobForm.locationType})`,
                             experienceLevel: jobForm.experienceLevel,
                             jobType: jobForm.employmentType,
-                            topCandidates: finalMatches
-                          };
+                            isReverseRecruitment: false,
+                            recruiterUid: currentUserId,
+                            createdAt: serverTimestamp()
+                          });
 
-                          setJobs(prev => [newJob, ...prev]);
+                          // Reload jobs
+                          const jobsSnapshot = await getDocs(collection(db, 'jobs'));
+                          const jobsList: RecruiterJob[] = [];
+                          jobsSnapshot.forEach((docSnap) => {
+                            const jData = docSnap.data();
+                            if (jData.recruiterUid === currentUserId) {
+                              const jobTags = jData.tags || [];
+                              const topCandidates = candidates.map(cand => {
+                                const matchesCount = jobTags.filter((tag: string) => 
+                                  cand.skills.some((skill: string) => skill.toLowerCase().includes(tag.toLowerCase()) || tag.toLowerCase().includes(skill.toLowerCase()))
+                                ).length;
+                                
+                                const matchScore = jobTags.length > 0 
+                                  ? Math.min(100, Math.round((matchesCount / jobTags.length) * 30 + 70)) 
+                                  : 75;
+                                  
+                                const whyMatched = [
+                                  `${cand.experience} exp`,
+                                  cand.isVerified ? 'Verified GitHub' : 'GitHub profile linked',
+                                  matchesCount > 0 ? `Matches ${matchesCount} skills` : 'Strong potential'
+                                ];
+                                
+                                return {
+                                  ...cand,
+                                  matchScore,
+                                  whyMatched,
+                                  recentlyActive: true
+                                };
+                              }).sort((a, b) => b.matchScore - a.matchScore);
+
+                              jobsList.push({
+                                id: docSnap.id,
+                                title: jData.title || '',
+                                postedDate: jData.postedDate || 'Just now',
+                                status: jData.status || 'Active',
+                                applicantsCount: jData.applicantsCount || 0,
+                                tags: jobTags,
+                                description: jData.description || '',
+                                salary: jData.salary || 'Negotiable',
+                                location: jData.location || '',
+                                experienceLevel: jData.experienceLevel || '',
+                                jobType: jData.jobType || '',
+                                topCandidates
+                              });
+                            }
+                          });
+                          setJobs(jobsList);
+                        } catch (err) {
+                          console.error("Error creating job posting:", err);
+                        } finally {
                           setShowSuccessAnimation(false);
                           setActiveView('home');
                           triggerToast("Job posting is now live");
-                        }, 2500);
+                        }
                       }}
                       className="px-6 py-2.5 text-xs font-bold bg-brand-gradient shadow-warm-sm cursor-pointer disabled:opacity-50"
                     >
@@ -2559,7 +2574,7 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                           {/* Actions Footer */}
                           <div className="flex items-center justify-between gap-3 pt-3 border-t border-border-warm/35">
                             <button
-                              onClick={(e) => handleTogglePass(cand.name, e)}
+                              onClick={(e) => handleTogglePass(cand, e)}
                               className={`flex-1 py-1.5 border rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 ${
                                 isPassed
                                   ? 'bg-red-50 border-red-200 text-red-600'
@@ -2570,7 +2585,7 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                             </button>
 
                             <button
-                              onClick={(e) => handleToggleShortlist(cand.name, e)}
+                              onClick={(e) => handleToggleShortlist(cand, e)}
                               className={`flex-1 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer shadow-warm-sm flex items-center justify-center gap-1 ${
                                 isShortlisted
                                   ? 'bg-success-green border border-success-green text-white'
@@ -2687,7 +2702,7 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                                 <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
                                   {/* Pass Action */}
                                   <button
-                                    onClick={(e) => handleTogglePass(cand.name, e)}
+                                    onClick={(e) => handleTogglePass(cand, e)}
                                     className={`p-1.5 border rounded-lg hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition cursor-pointer ${
                                       isPassed ? 'bg-red-50 border-red-200 text-red-600' : 'border-border-warm text-text-muted'
                                     }`}
@@ -2698,7 +2713,7 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
 
                                   {/* Shortlist Action */}
                                   <button
-                                    onClick={(e) => handleToggleShortlist(cand.name, e)}
+                                    onClick={(e) => handleToggleShortlist(cand, e)}
                                     className={`px-3 py-1.5 rounded-lg text-xs font-extrabold shadow-warm-sm transition cursor-pointer ${
                                       isShortlisted
                                         ? 'bg-success-green text-white'
@@ -3002,6 +3017,86 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                       </div>
                     </div>
 
+                    {/* EXPLAINABLE AI MATCH BREAKDOWN */}
+                    {cand.matchBreakdown && (
+                      <div className="flex flex-col gap-3 bg-white p-5 rounded-2xl border border-border-warm shadow-warm-sm">
+                        <h3 className="font-sora font-extrabold text-xs sm:text-sm text-text-navy uppercase tracking-wider flex items-center gap-1.5">
+                          <Sparkles className="w-4 h-4 text-accent-purple" />
+                          <span>Explainable AI Match Breakdown</span>
+                        </h3>
+                        <p className="font-manrope text-[11px] text-text-muted">
+                          Weighted Match Score based on Hybrid Search (Elasticsearch keyword + Semantic embedding similarity).
+                        </p>
+                        <div className="flex flex-col gap-3 mt-2 font-manrope">
+                          {/* Semantic Similarity */}
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-xs">
+                              <span className="font-bold text-text-navy">Contextual Semantic Similarity (40% weight)</span>
+                              <span className="font-extrabold text-accent-purple">{cand.matchBreakdown.semantic}%</span>
+                            </div>
+                            <div className="w-full bg-surface h-2 rounded-full overflow-hidden">
+                              <div className="bg-gradient-to-r from-accent-purple to-accent-orange h-full" style={{ width: `${cand.matchBreakdown.semantic}%` }} />
+                            </div>
+                          </div>
+
+                          {/* Skills Overlap */}
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-xs">
+                              <span className="font-bold text-text-navy">Structured Skills Matching (25% weight)</span>
+                              <span className="font-extrabold text-accent-purple">{cand.matchBreakdown.skills}%</span>
+                            </div>
+                            <div className="w-full bg-surface h-2 rounded-full overflow-hidden">
+                              <div className="bg-accent-purple h-full" style={{ width: `${cand.matchBreakdown.skills}%` }} />
+                            </div>
+                          </div>
+
+                          {/* Experience Alignment */}
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-xs">
+                              <span className="font-bold text-text-navy">Experience Level Alignment (15% weight)</span>
+                              <span className="font-extrabold text-accent-purple">{cand.matchBreakdown.experience}%</span>
+                            </div>
+                            <div className="w-full bg-surface h-2 rounded-full overflow-hidden">
+                              <div className="bg-accent-purple h-full" style={{ width: `${cand.matchBreakdown.experience}%` }} />
+                            </div>
+                          </div>
+
+                          {/* Project History */}
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-xs">
+                              <span className="font-bold text-text-navy">Project Evidence & Context (10% weight)</span>
+                              <span className="font-extrabold text-accent-purple">{cand.matchBreakdown.projects}%</span>
+                            </div>
+                            <div className="w-full bg-surface h-2 rounded-full overflow-hidden">
+                              <div className="bg-accent-purple h-full" style={{ width: `${cand.matchBreakdown.projects}%` }} />
+                            </div>
+                          </div>
+
+                          {/* Education */}
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-xs">
+                              <span className="font-bold text-text-navy">Education History (5% weight)</span>
+                              <span className="font-extrabold text-accent-purple">{cand.matchBreakdown.education}%</span>
+                            </div>
+                            <div className="w-full bg-surface h-2 rounded-full overflow-hidden">
+                              <div className="bg-accent-purple h-full" style={{ width: `${cand.matchBreakdown.education}%` }} />
+                            </div>
+                          </div>
+
+                          {/* Certifications & Verification */}
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-xs">
+                              <span className="font-bold text-text-navy">Certifications & Verification (5% weight)</span>
+                              <span className="font-extrabold text-accent-purple">{cand.matchBreakdown.certifications}%</span>
+                            </div>
+                            <div className="w-full bg-surface h-2 rounded-full overflow-hidden">
+                              <div className="bg-accent-purple h-full" style={{ width: `${cand.matchBreakdown.certifications}%` }} />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     {/* WHY THIS MATCH SECTION */}
                     <div className="flex flex-col gap-2 bg-white p-5 rounded-2xl border border-border-warm shadow-warm-sm">
                       <h3 className="font-sora font-extrabold text-xs sm:text-sm text-text-navy uppercase tracking-wider flex items-center gap-1.5">
@@ -3169,7 +3264,7 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                     <div className="sticky bottom-0 left-0 right-0 pt-4 pb-1 bg-gradient-to-t from-white via-white to-white/0 flex gap-3 z-10">
                       <button
                         onClick={(e) => {
-                          handleTogglePass(cand.name, e);
+                          handleTogglePass(cand, e);
                         }}
                         className={`flex-1 py-3 border rounded-2xl text-xs font-extrabold shadow-warm-sm transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                           isPassed
@@ -3182,7 +3277,7 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
 
                       <button
                         onClick={(e) => {
-                          handleToggleShortlist(cand.name, e);
+                          handleToggleShortlist(cand, e);
                         }}
                         className={`flex-1 py-3 rounded-2xl text-xs font-extrabold shadow-warm-md transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                           isShortlisted

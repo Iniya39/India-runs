@@ -6,7 +6,6 @@ import { DashboardScreen } from './screens/DashboardScreen';
 import { CandidateProfileBuilderScreen } from './screens/CandidateProfileBuilderScreen';
 import { RecruiterCompanySetupScreen } from './screens/RecruiterCompanySetupScreen';
 
-// Firebase Auth & Firestore imports (routed through our fallback proxy)
 import { 
   auth, 
   db, 
@@ -16,8 +15,8 @@ import {
   getDoc, 
   setDoc, 
   serverTimestamp,
-  isDemoMode
-} from './firebase';
+  isConfigValid
+} from './supabase';
 
 type ScreenName = 'style-guide' | 'auth' | 'role-selection' | 'candidate-profile-builder' | 'recruiter-company-setup' | 'dashboard';
 
@@ -32,6 +31,7 @@ export default function App() {
   const [currentScreen, setCurrentScreen] = useState<ScreenName>('style-guide');
   const [session, setSession] = useState<UserSession | null>(null);
   const [loading, setLoading] = useState(true);
+  const [selectedRoleFromLanding, setSelectedRoleFromLanding] = useState<'candidate' | 'recruiter' | null>(null);
 
   // Monitor auth state changes & handle session persistence
   useEffect(() => {
@@ -42,13 +42,12 @@ export default function App() {
           const userDocSnap = await getDoc(userDocRef);
 
           if (!userDocSnap.exists()) {
-            // New user signed up, but Firestore document doesn't exist yet
-            // Let's create a default profile (handleSignupSuccess will also double check/enrich this with displayName)
+            const chosenRole = selectedRoleFromLanding;
             const newUser = {
               email: user.email || '',
               displayName: user.displayName || user.email?.split('@')[0] || 'Anonymous',
               createdAt: serverTimestamp(),
-              role: null,
+              role: chosenRole,
               onboardingComplete: false,
             };
             await setDoc(userDocRef, newUser, { merge: true });
@@ -57,23 +56,33 @@ export default function App() {
               uid: user.uid,
               name: newUser.displayName,
               email: newUser.email,
-              role: null,
+              role: chosenRole,
             });
-            setCurrentScreen('role-selection');
+            if (chosenRole) {
+              setCurrentScreen(chosenRole === 'candidate' ? 'candidate-profile-builder' : 'recruiter-company-setup');
+            } else {
+              setCurrentScreen('role-selection');
+            }
           } else {
             // Existing user
             const data = userDocSnap.data();
+            let role = data.role;
+            if (!role && selectedRoleFromLanding) {
+              await setDoc(userDocRef, { role: selectedRoleFromLanding }, { merge: true });
+              role = selectedRoleFromLanding;
+            }
+
             setSession({
               uid: user.uid,
               name: data.displayName || user.displayName || 'Anonymous',
               email: data.email || user.email || '',
-              role: data.role || null,
+              role: role || null,
             });
 
-            if (!data.role) {
+            if (!role) {
               setCurrentScreen('role-selection');
             } else if (!data.onboardingComplete) {
-              if (data.role === 'candidate') {
+              if (role === 'candidate') {
                 setCurrentScreen('candidate-profile-builder');
               } else {
                 setCurrentScreen('recruiter-company-setup');
@@ -93,17 +102,18 @@ export default function App() {
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [selectedRoleFromLanding]);
 
   const handleSignupSuccess = async (userData: { name: string; email: string }) => {
     const user = auth.currentUser;
     if (user) {
       const userDocRef = doc(db, 'users', user.uid);
+      const chosenRole = selectedRoleFromLanding;
       const newUser = {
         email: user.email || userData.email,
         displayName: userData.name || user.displayName || 'Anonymous',
         createdAt: serverTimestamp(),
-        role: null,
+        role: chosenRole,
         onboardingComplete: false,
       };
       await setDoc(userDocRef, newUser, { merge: true });
@@ -112,9 +122,13 @@ export default function App() {
         uid: user.uid,
         name: newUser.displayName,
         email: newUser.email,
-        role: null,
+        role: chosenRole,
       });
-      setCurrentScreen('role-selection');
+      if (chosenRole) {
+        setCurrentScreen(chosenRole === 'candidate' ? 'candidate-profile-builder' : 'recruiter-company-setup');
+      } else {
+        setCurrentScreen('role-selection');
+      }
     }
   };
 
@@ -125,11 +139,12 @@ export default function App() {
       const userDocSnap = await getDoc(userDocRef);
 
       if (!userDocSnap.exists()) {
+        const chosenRole = selectedRoleFromLanding;
         const newUser = {
           email: user.email || userData.email,
           displayName: user.displayName || user.email?.split('@')[0] || 'Anonymous',
           createdAt: serverTimestamp(),
-          role: null,
+          role: chosenRole,
           onboardingComplete: false,
         };
         await setDoc(userDocRef, newUser);
@@ -137,21 +152,31 @@ export default function App() {
           uid: user.uid,
           name: newUser.displayName,
           email: newUser.email,
-          role: null,
+          role: chosenRole,
         });
-        setCurrentScreen('role-selection');
+        if (chosenRole) {
+          setCurrentScreen(chosenRole === 'candidate' ? 'candidate-profile-builder' : 'recruiter-company-setup');
+        } else {
+          setCurrentScreen('role-selection');
+        }
       } else {
         const data = userDocSnap.data();
+        let role = data.role;
+        if (!role && selectedRoleFromLanding) {
+          await setDoc(userDocRef, { role: selectedRoleFromLanding }, { merge: true });
+          role = selectedRoleFromLanding;
+        }
+
         setSession({
           uid: user.uid,
           name: data.displayName || user.displayName || 'Anonymous',
           email: data.email || user.email || '',
-          role: data.role || null,
+          role: role || null,
         });
-        if (!data.role) {
+        if (!role) {
           setCurrentScreen('role-selection');
         } else if (!data.onboardingComplete) {
-          if (data.role === 'candidate') {
+          if (role === 'candidate') {
             setCurrentScreen('candidate-profile-builder');
           } else {
             setCurrentScreen('recruiter-company-setup');
@@ -186,8 +211,66 @@ export default function App() {
   const handleLogout = async () => {
     await signOut(auth);
     setSession(null);
+    setSelectedRoleFromLanding(null);
     setCurrentScreen('style-guide');
   };
+
+  if (!isConfigValid) {
+    return (
+      <div className="min-h-screen bg-[#0D0E12] flex items-center justify-center p-4 font-manrope">
+        <div className="max-w-md w-full bg-[#161820]/80 backdrop-blur-xl border border-[#2B2E3D] rounded-3xl p-8 shadow-[0_20px_50px_rgba(0,0,0,0.5)] text-center relative overflow-hidden">
+          {/* Decorative background glow */}
+          <div className="absolute -top-24 -left-24 w-48 h-48 bg-[#FF6B6B]/10 rounded-full blur-3xl" />
+          <div className="absolute -bottom-24 -right-24 w-48 h-48 bg-[#FFD93D]/10 rounded-full blur-3xl" />
+          
+          <div className="w-16 h-16 rounded-2xl bg-[#FF6B6B]/10 border border-[#FF6B6B]/20 flex items-center justify-center text-[#FF6B6B] mx-auto mb-6">
+            <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          
+          <h2 className="font-sora font-extrabold text-[#F8F9FA] text-2xl tracking-tight">Configuration Setup Required</h2>
+          <p className="text-sm text-[#A0A5B5] mt-3 leading-relaxed">
+            TalentSphere requires active Firebase and Supabase database parameters to run. Local storage fallback mode is disabled.
+          </p>
+          
+          <div className="mt-6 text-left bg-[#1F212E] border border-[#2D3042] rounded-2xl p-4.5 space-y-3">
+            <h4 className="text-xs font-bold text-[#F8F9FA] uppercase tracking-wider">Required Environment Variables:</h4>
+            <div className="space-y-2 text-xs font-mono">
+              <div className="flex items-center justify-between">
+                <span className="text-[#A0A5B5]">VITE_FIREBASE_API_KEY</span>
+                {import.meta.env.VITE_FIREBASE_API_KEY && import.meta.env.VITE_FIREBASE_API_KEY !== "AIzaSyFakeKeyPlaceholderForAppToBuild" ? (
+                  <span className="text-[#51CF66] font-bold">✓ Configured</span>
+                ) : (
+                  <span className="text-[#FF6B6B] font-bold">✗ Missing / Placeholder</span>
+                )}
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[#A0A5B5]">VITE_SUPABASE_URL</span>
+                {import.meta.env.VITE_SUPABASE_URL ? (
+                  <span className="text-[#51CF66] font-bold">✓ Configured</span>
+                ) : (
+                  <span className="text-[#FF6B6B] font-bold">✗ Missing</span>
+                )}
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[#A0A5B5]">VITE_SUPABASE_ANON_KEY</span>
+                {import.meta.env.VITE_SUPABASE_ANON_KEY ? (
+                  <span className="text-[#51CF66] font-bold">✓ Configured</span>
+                ) : (
+                  <span className="text-[#FF6B6B] font-bold">✗ Missing</span>
+                )}
+              </div>
+            </div>
+          </div>
+          
+          <div className="mt-6 pt-5 border-t border-[#2D3042]/50 text-xs text-[#A0A5B5] leading-relaxed">
+            Please define these keys in your local <code className="text-[#FFD93D] font-mono">.env</code> file at the root of the workspace directory, then restart your development server.
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -205,16 +288,13 @@ export default function App() {
 
   return (
     <div className="min-h-screen">
-      {isDemoMode && (
-        <div className="bg-[#FFF3CD] border-b border-[#FFEBAA] text-[#856404] px-4 py-2 text-center text-xs font-manrope font-semibold flex items-center justify-center gap-1.5 relative z-50">
-          <span className="inline-flex items-center justify-center w-2 h-2 rounded-full bg-[#856404] animate-pulse" />
-          Running in Demo Mode (Local Persistent Storage). To sync with Firestore cloud, connect a Firebase project via the Settings tab.
-        </div>
-      )}
       
       {/* Dynamic Screen Routing Coordinator */}
       {currentScreen === 'style-guide' && (
-        <StyleGuide onNavigateToAuth={() => setCurrentScreen('auth')} />
+        <StyleGuide onSelectRole={(role) => {
+          setSelectedRoleFromLanding(role);
+          setCurrentScreen('auth');
+        }} />
       )}
 
       {currentScreen === 'auth' && (
@@ -256,7 +336,7 @@ export default function App() {
               const userRef = doc(db, 'users', auth.currentUser.uid);
               await setDoc(userRef, { 
                 onboardingComplete: true,
-                companyProfile: data 
+                companyId: data.id 
               }, { merge: true });
             }
             setCurrentScreen('dashboard');
@@ -265,7 +345,7 @@ export default function App() {
             if (auth.currentUser) {
               const userRef = doc(db, 'users', auth.currentUser.uid);
               await setDoc(userRef, { 
-                companyProfile: data 
+                companyId: data.id 
               }, { merge: true });
             }
             setCurrentScreen('dashboard');
@@ -284,75 +364,6 @@ export default function App() {
         />
       )}
 
-      {/* Persistent Tiny Screen switcher helper tool in absolute corner for easy review */}
-      <div className="fixed bottom-3 right-3 z-50 bg-white/90 backdrop-blur-md border border-border-warm rounded-full px-3 py-1.5 shadow-warm-lg flex items-center gap-2">
-        <span className="text-[10px] font-bold text-text-navy font-mono uppercase">Quick Jump:</span>
-        <div className="flex gap-1.5 flex-wrap max-w-xl justify-end">
-          {(['style-guide', 'auth', 'role-selection', 'candidate-profile-builder', 'recruiter-company-setup', 'candidate-home', 'recruiter-home'] as const).map((scr) => {
-            const isActive = scr === 'candidate-home'
-              ? (currentScreen === 'dashboard' && session?.role === 'candidate')
-              : scr === 'recruiter-home'
-                ? (currentScreen === 'dashboard' && session?.role === 'recruiter')
-                : currentScreen === scr;
-
-            return (
-              <button
-                key={scr}
-                onClick={() => {
-                  if (scr === 'candidate-home') {
-                    setSession({
-                      uid: 'mock-uid',
-                      name: 'Demo Candidate',
-                      email: 'demo@talentsphere.com',
-                      role: 'candidate',
-                    });
-                    setCurrentScreen('dashboard');
-                  } else if (scr === 'recruiter-home') {
-                    setSession({
-                      uid: 'mock-uid',
-                      name: 'Demo Recruiter',
-                      email: 'recruiter@talentsphere.com',
-                      role: 'recruiter',
-                    });
-                    setCurrentScreen('dashboard');
-                  } else {
-                    if (scr === 'candidate-profile-builder' && !session) {
-                      setSession({
-                        uid: 'mock-uid',
-                        name: 'Demo Builder',
-                        email: 'demo@talentsphere.com',
-                        role: 'candidate',
-                      });
-                    } else if (scr === 'recruiter-company-setup' && !session) {
-                      setSession({
-                        uid: 'mock-uid',
-                        name: 'Demo Recruiter',
-                        email: 'recruiter@talentsphere.com',
-                        role: 'recruiter',
-                      });
-                    } else if (!session) {
-                      setSession({
-                        uid: 'mock-uid',
-                        name: 'Demo Builder',
-                        email: 'demo@talentsphere.com',
-                        role: null,
-                      });
-                    }
-                    setCurrentScreen(scr);
-                  }
-                }}
-                className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold font-manrope capitalize cursor-pointer transition-all ${
-                  isActive
-                    ? 'bg-accent-orange text-white'
-                    : 'bg-border-warm/40 text-text-muted hover:text-text-navy hover:bg-border-warm/70'
-                }`}
-              >
-                {scr.replace(/-/g, ' ')}
-              </button>
-            );
-          })}
-        </div>
-      </div>
 
     </div>
   );

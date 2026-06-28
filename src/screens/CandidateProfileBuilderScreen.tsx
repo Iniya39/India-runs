@@ -26,16 +26,19 @@ import { Badge } from '../components/Badge';
 import { Avatar } from '../components/Avatar';
 import { FloatingInfoCard } from '../components/FloatingInfoCard';
 import { NavBar, NavLinkItem } from '../components/NavBar';
-import {
-  auth,
-  db,
-  doc,
-  getDoc,
-  setDoc,
-  updateDoc,
+import { 
+  db, 
+  auth, 
+  doc, 
+  getDoc, 
+  setDoc, 
+  updateDoc, 
+  collection, 
+  getDocs, 
+  addDoc, 
   serverTimestamp,
   uploadProfilePhoto
-} from '../firebase';
+} from '../supabase';
 
 export interface WorkExperience {
   id: string;

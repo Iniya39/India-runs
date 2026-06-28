@@ -1,9 +1,6 @@
-import { doc, getDoc, setDoc, db } from '../firebase';
+import { doc, getDoc, setDoc, db } from '../supabase';
 
-// Helper to generate a stable mock candidate UID based on name
-export function getCandidateUid(name: string): string {
-  return `mock-candidate-uid-${name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
-}
+
 
 export interface ApplicationDoc {
   candidateUid: string;

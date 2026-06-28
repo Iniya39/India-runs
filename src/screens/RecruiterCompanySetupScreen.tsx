@@ -16,17 +16,19 @@ import {
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { BackgroundBlob } from '../components/BackgroundBlobs';
-import {
-  auth,
-  db,
-  doc,
-  getDoc,
-  collection,
-  addDoc,
-  updateDoc,
+import { 
+  db, 
+  auth, 
+  doc, 
+  getDoc, 
+  setDoc, 
+  updateDoc, 
+  collection, 
+  getDocs, 
+  addDoc, 
   serverTimestamp,
   uploadCompanyLogo
-} from '../firebase';
+} from '../supabase';
 
 export interface RecruiterCompanyData {
   companyName: string;

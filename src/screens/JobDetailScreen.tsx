@@ -20,8 +20,7 @@ import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { JobMatch } from './CandidateHomeScreen';
-import { db, auth, doc, getDoc, setDoc, updateDoc, serverTimestamp } from '../firebase';
-import { getCandidateUid } from '../lib/chatUtils';
+import { db, auth, doc, getDoc, setDoc, updateDoc, serverTimestamp } from '../supabase';
 
 interface JobDetailScreenProps {
   jobId: string;
@@ -66,14 +65,14 @@ export const JobDetailScreen: React.FC<JobDetailScreenProps> = ({
             location: data.location || 'Remote',
             jobType: data.jobType || 'Full-time',
             experienceLevel: data.experienceLevel || 'Senior',
-            salary: data.salary || '$100,000+',
+            salary: data.salary || 'Negotiable',
             matchScore: data.matchScore || Math.floor(Math.random() * 25) + 75,
             tags: data.tags || [],
             description: data.description || '',
             pitch: data.pitch || '',
             postedDate: data.postedDate || '3 days ago',
             isReverseRecruitment: !!data.isReverseRecruitment,
-            recruiterUid: data.recruiterUid || 'mock-recruiter-uid',
+            recruiterUid: data.recruiterUid || '',
           });
         }
       } catch (err) {
@@ -98,8 +97,8 @@ export const JobDetailScreen: React.FC<JobDetailScreenProps> = ({
     setIsSubmitting(true);
 
     try {
-      const candidateUid = userData.uid || auth.currentUser?.uid || getCandidateUid(userData.name || 'Sarah Chen');
-      const recruiterUid = job.recruiterUid || 'mock-recruiter-uid';
+      const candidateUid = userData.uid || auth.currentUser?.uid || '';
+      const recruiterUid = job.recruiterUid || '';
       const applicationId = `${job.id}_${candidateUid}`;
       
       const appRef = doc(db, 'applications', applicationId);
@@ -130,6 +129,21 @@ export const JobDetailScreen: React.FC<JobDetailScreenProps> = ({
           chatUnlocked: true
         });
 
+        // Get recruiter and company details dynamically
+        const recruiterRef = doc(db, 'users', recruiterUid);
+        const recruiterSnap = await getDoc(recruiterRef);
+        const recruiterData = recruiterSnap.exists() ? recruiterSnap.data() : null;
+        const recruiterName = recruiterData?.displayName || 'Recruiter';
+        
+        let recruiterAvatarUrl = 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&h=150&fit=crop&crop=face';
+        if (recruiterData?.companyId) {
+          const companyRef = doc(db, 'companies', recruiterData.companyId);
+          const companySnap = await getDoc(companyRef);
+          if (companySnap.exists()) {
+            recruiterAvatarUrl = companySnap.data().logoUrl || recruiterAvatarUrl;
+          }
+        }
+
         const convRef = doc(db, 'conversations', applicationId);
         const convSnap = await getDoc(convRef);
 
@@ -139,10 +153,10 @@ export const JobDetailScreen: React.FC<JobDetailScreenProps> = ({
             candidateUid,
             recruiterUid,
             jobId: job.id,
-            candidateName: userData.name || 'Sarah Chen',
+            candidateName: userData.name || 'Anonymous Candidate',
             candidateAvatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&h=150&fit=crop&crop=face',
-            recruiterName: 'Elena Rostova',
-            recruiterAvatarUrl: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&h=150&fit=crop&crop=face',
+            recruiterName,
+            recruiterAvatarUrl,
             jobTitle: job.title,
             companyName: job.companyName,
             lastMessage: '',
