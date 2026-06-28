@@ -27,13 +27,15 @@ import { Badge } from '../components/Badge';
 import { Avatar } from '../components/Avatar';
 import { BackgroundBlob } from '../components/BackgroundBlobs';
 import { CandidateHomeScreen } from './CandidateHomeScreen';
+import { RecruiterHomeScreen } from './RecruiterHomeScreen';
 
 export interface DashboardScreenProps {
   role: 'candidate' | 'recruiter';
-  userData: { name?: string; email: string };
+  userData: { name?: string; email: string; companyName?: string };
   onLogout: () => void;
   onNavigateToStyleGuide?: () => void;
   onEditProfile?: () => void;
+  onEditCompany?: () => void;
 }
 
 export const DashboardScreen: React.FC<DashboardScreenProps> = ({
@@ -42,6 +44,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   onLogout,
   onNavigateToStyleGuide,
   onEditProfile,
+  onEditCompany,
 }) => {
   const isCandidate = role === 'candidate';
 
@@ -54,6 +57,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       />
     );
   }
+
+  return (
+    <RecruiterHomeScreen
+      userData={userData}
+      onLogout={onLogout}
+      onNavigateToCompanySetup={onEditCompany || (() => {})}
+    />
+  );
 
   // Realistic mock data for Candidate
   const candidateMatches = [

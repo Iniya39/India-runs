@@ -280,58 +280,77 @@ export default function App() {
           onLogout={handleLogout}
           onNavigateToStyleGuide={() => setCurrentScreen('style-guide')}
           onEditProfile={() => setCurrentScreen('candidate-profile-builder')}
+          onEditCompany={() => setCurrentScreen('recruiter-company-setup')}
         />
       )}
 
       {/* Persistent Tiny Screen switcher helper tool in absolute corner for easy review */}
       <div className="fixed bottom-3 right-3 z-50 bg-white/90 backdrop-blur-md border border-border-warm rounded-full px-3 py-1.5 shadow-warm-lg flex items-center gap-2">
         <span className="text-[10px] font-bold text-text-navy font-mono uppercase">Quick Jump:</span>
-        <div className="flex gap-1.5">
-          {(['style-guide', 'auth', 'role-selection', 'candidate-profile-builder', 'recruiter-company-setup', 'dashboard'] as const).map((scr) => (
-            <button
-              key={scr}
-              onClick={() => {
-                if (scr === 'dashboard' && (!session || !session.role)) {
-                  // Ensure mock fallback if jumping directly
-                  setSession({
-                    uid: 'mock-uid',
-                    name: 'Demo Builder',
-                    email: 'demo@talentsphere.com',
-                    role: 'candidate',
-                  });
-                } else if (scr === 'candidate-profile-builder' && !session) {
-                  setSession({
-                    uid: 'mock-uid',
-                    name: 'Demo Builder',
-                    email: 'demo@talentsphere.com',
-                    role: 'candidate',
-                  });
-                } else if (scr === 'recruiter-company-setup' && !session) {
-                  setSession({
-                    uid: 'mock-uid',
-                    name: 'Demo Recruiter',
-                    email: 'recruiter@talentsphere.com',
-                    role: 'recruiter',
-                  });
-                } else if (!session) {
-                  setSession({
-                    uid: 'mock-uid',
-                    name: 'Demo Builder',
-                    email: 'demo@talentsphere.com',
-                    role: null,
-                  });
-                }
-                setCurrentScreen(scr);
-              }}
-              className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold font-manrope capitalize cursor-pointer transition-all ${
-                currentScreen === scr
-                  ? 'bg-accent-orange text-white'
-                  : 'bg-border-warm/40 text-text-muted hover:text-text-navy hover:bg-border-warm/70'
-              }`}
-            >
-              {scr.replace(/-/g, ' ')}
-            </button>
-          ))}
+        <div className="flex gap-1.5 flex-wrap max-w-xl justify-end">
+          {(['style-guide', 'auth', 'role-selection', 'candidate-profile-builder', 'recruiter-company-setup', 'candidate-home', 'recruiter-home'] as const).map((scr) => {
+            const isActive = scr === 'candidate-home'
+              ? (currentScreen === 'dashboard' && session?.role === 'candidate')
+              : scr === 'recruiter-home'
+                ? (currentScreen === 'dashboard' && session?.role === 'recruiter')
+                : currentScreen === scr;
+
+            return (
+              <button
+                key={scr}
+                onClick={() => {
+                  if (scr === 'candidate-home') {
+                    setSession({
+                      uid: 'mock-uid',
+                      name: 'Demo Candidate',
+                      email: 'demo@talentsphere.com',
+                      role: 'candidate',
+                    });
+                    setCurrentScreen('dashboard');
+                  } else if (scr === 'recruiter-home') {
+                    setSession({
+                      uid: 'mock-uid',
+                      name: 'Demo Recruiter',
+                      email: 'recruiter@talentsphere.com',
+                      role: 'recruiter',
+                    });
+                    setCurrentScreen('dashboard');
+                  } else {
+                    if (scr === 'candidate-profile-builder' && !session) {
+                      setSession({
+                        uid: 'mock-uid',
+                        name: 'Demo Builder',
+                        email: 'demo@talentsphere.com',
+                        role: 'candidate',
+                      });
+                    } else if (scr === 'recruiter-company-setup' && !session) {
+                      setSession({
+                        uid: 'mock-uid',
+                        name: 'Demo Recruiter',
+                        email: 'recruiter@talentsphere.com',
+                        role: 'recruiter',
+                      });
+                    } else if (!session) {
+                      setSession({
+                        uid: 'mock-uid',
+                        name: 'Demo Builder',
+                        email: 'demo@talentsphere.com',
+                        role: null,
+                      });
+                    }
+                    setCurrentScreen(scr);
+                  }
+                }}
+                className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold font-manrope capitalize cursor-pointer transition-all ${
+                  isActive
+                    ? 'bg-accent-orange text-white'
+                    : 'bg-border-warm/40 text-text-muted hover:text-text-navy hover:bg-border-warm/70'
+                }`}
+              >
+                {scr.replace(/-/g, ' ')}
+              </button>
+            );
+          })}
         </div>
       </div>
 
