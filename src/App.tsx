@@ -335,19 +335,12 @@ export default function App() {
             if (auth.currentUser) {
               const userRef = doc(db, 'users', auth.currentUser.uid);
               await setDoc(userRef, { 
-                onboardingComplete: true,
-                companyId: data.id 
+                onboardingComplete: true
               }, { merge: true });
             }
             setCurrentScreen('dashboard');
           }}
           onSaveAndExit={async (data) => {
-            if (auth.currentUser) {
-              const userRef = doc(db, 'users', auth.currentUser.uid);
-              await setDoc(userRef, { 
-                companyId: data.id 
-              }, { merge: true });
-            }
             setCurrentScreen('dashboard');
           }}
         />

@@ -48,10 +48,13 @@ import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { Badge } from '../components/Badge';
 import { Avatar } from '../components/Avatar';
+import { CandidateRankingDashboard } from '../components/CandidateRankingDashboard';
+import { CandidateSearch } from '../components/CandidateSearch';
 import { FloatingInfoCard } from '../components/FloatingInfoCard';
 import { NavBar, NavLinkItem } from '../components/NavBar';
 import { PrivateChat } from '../components/PrivateChat';
-import { syncApplicationState } from '../lib/chatUtils';
+import { syncApplicationState, getCandidateUid } from '../lib/chatUtils';
+// Removed mock aiUtils import
 import { 
   db, 
   auth, 
@@ -62,7 +65,10 @@ import {
   onSnapshot,
   doc,
   getDoc,
-  supabase
+  supabase,
+  query,
+  where,
+  updateDoc
 } from '../supabase';
 
 const convertToINR = (amount: number, fromCurrency: string): number => {
@@ -240,6 +246,50 @@ const buildCandidateDetails = (candidate: any) => {
   };
 };
 
+const CollapsibleSection = ({ title, children, defaultOpen = true }: { title: string, children: React.ReactNode, defaultOpen?: boolean }) => {
+  const [isOpen, setIsOpen] = React.useState(defaultOpen);
+  return (
+    <div className="bg-white border border-border-warm rounded-2xl overflow-hidden shadow-warm-sm mb-4 transition-all duration-300">
+      <button 
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full px-6 py-4 flex items-center justify-between bg-surface hover:bg-slate-50 transition-colors border-b border-border-warm/50 cursor-pointer"
+      >
+        <h3 className="font-sora font-bold text-sm sm:text-base text-text-navy">{title}</h3>
+        {isOpen ? <ArrowUp className="w-4 h-4 text-text-muted" /> : <ArrowDown className="w-4 h-4 text-text-muted" />}
+      </button>
+      {isOpen && (
+        <div className="p-6 bg-white flex flex-col gap-5">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const fetchAIJD = async (title: string) => {
+  const res = await fetch('http://localhost:8000/api/generate-jd', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title })
+  });
+  if (!res.ok) throw new Error("Failed to generate JD");
+  const data = await res.json();
+  
+  let text = `Job Title: ${title}\n\n`;
+  text += `Role Overview\n${data.jobSummary}\n\n`;
+  text += `Key Responsibilities\n${data.keyResponsibilities.map((r: string) => `• ${r}`).join('\n')}\n\n`;
+  text += `Required Skills\n${data.requiredSkills.map((s: string) => `• ${s}`).join('\n')}\n\n`;
+  if (data.preferredSkills && data.preferredSkills.length > 0) text += `Preferred Skills\n${data.preferredSkills.map((s: string) => `• ${s}`).join('\n')}\n\n`;
+  if (data.technologies && data.technologies.length > 0) text += `Technologies\n${data.technologies.map((t: string) => `• ${t}`).join('\n')}\n\n`;
+  text += `Experience & Education\n• Experience: ${data.experienceRange}\n• Education: ${data.educationRequirements}\n\n`;
+  if (data.softSkills && data.softSkills.length > 0) text += `Soft Skills\n${data.softSkills.map((s: string) => `• ${s}`).join('\n')}\n\n`;
+  if (data.interviewFocusAreas && data.interviewFocusAreas.length > 0) text += `Interview Focus Areas\n${data.interviewFocusAreas.map((f: string) => `• ${f}`).join('\n')}\n\n`;
+  if (data.hiringPriorities && data.hiringPriorities.length > 0) text += `Hiring Priorities\n${data.hiringPriorities.map((p: string) => `• ${p}`).join('\n')}\n\n`;
+  if (data.expectedDeliverables && data.expectedDeliverables.length > 0) text += `Expected Deliverables\n${data.expectedDeliverables.map((d: string) => `• ${d}`).join('\n')}`;
+  return text;
+};
+
 export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
   userData,
   onLogout,
@@ -247,7 +297,7 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
 }) => {
   const currentUserId = userData.uid || auth?.currentUser?.uid || '';
   // Navigation tabs state
-  const [activeTab, setActiveTab] = useState<'home' | 'candidates' | 'messages' | 'company-settings'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'candidates' | 'search-candidates' | 'messages' | 'company-settings'>('home');
   const [activeView, setActiveView] = useState<'home' | 'ranking' | 'post-job'>('home');
   
   // Jobs List State
@@ -270,6 +320,7 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
     salaryMax: '',
     salaryCurrency: 'INR',
     salaryPublic: true,
+    noticePeriod: 'Immediate',
     requiredSkills: [] as string[],
     aiParsedRequirements: null as {
       hardRequirements: string[];
@@ -290,6 +341,11 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
   const [successAnimationType, setSuccessAnimationType] = useState<'draft' | 'post'>('post');
   const [notifications, setNotifications] = useState<any[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
+
+  // --- AI JOB DESCRIPTION ASSISTANT STATE ---
+  const [isGeneratingJD, setIsGeneratingJD] = useState(false);
+  const [generatedJDPreview, setGeneratedJDPreview] = useState<string | null>(null);
+  const [isEditingPreview, setIsEditingPreview] = useState(false);
 
   const resetJobForm = () => {
     setJobForm({
@@ -590,6 +646,15 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
         setActiveView('home');
         setSelectedJob(null);
       }
+    },
+    { 
+      label: 'Search Candidates', 
+      href: '#search-candidates', 
+      active: activeTab === 'search-candidates',
+      onClick: () => {
+        setActiveTab('search-candidates');
+        setActiveView('home');
+      } 
     },
     {
       label: 'Candidates',
@@ -940,7 +1005,18 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 relative z-10">
 
-        {activeTab === 'messages' ? (
+        {activeTab === 'search-candidates' ? (
+          <motion.div
+            key="search-candidates-tab"
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -15 }}
+            transition={{ duration: 0.3 }}
+            className="w-full"
+          >
+            <CandidateSearch />
+          </motion.div>
+        ) : activeTab === 'messages' ? (
           <motion.div
             key="messages-tab-recruiter"
             initial={{ opacity: 0, y: 15 }}
@@ -1341,6 +1417,35 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
 
             </motion.div>
 
+          ) : activeView === 'ranking' ? (
+            <motion.div
+              key="recruiter-ranking"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              transition={{ duration: 0.4, ease: "easeOut" }}
+              className="w-full flex flex-col gap-6"
+            >
+              <div className="flex items-center gap-4 mb-2">
+                <button
+                  onClick={() => {
+                    setActiveView('home');
+                    setSelectedJob(null);
+                  }}
+                  className="p-2 hover:bg-black/5 rounded-full transition-colors text-text-muted"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                </button>
+                <h2 className="font-sora font-extrabold text-2xl md:text-3xl text-text-navy">
+                  Candidate AI Ranking
+                </h2>
+              </div>
+              {selectedJob ? (
+                <CandidateRankingDashboard jobId={selectedJob.id} jobData={selectedJob.parsed_data || {}} />
+              ) : (
+                <div className="p-12 text-center text-text-muted">Please select a job first to view rankings.</div>
+              )}
+            </motion.div>
           ) : activeView === 'post-job' ? (
 
             /* ==================== SCREEN C: POST JOB SCREEN ==================== */
@@ -1399,7 +1504,8 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                 </motion.div>
               ) : (
                 <div className="space-y-6">
-                  <Card className="flex flex-col gap-6 p-6 sm:p-8 shadow-warm-md" id="post-job-form-card">
+                  <div className="flex flex-col gap-2" id="post-job-form-card">
+                    <CollapsibleSection title="Basic Information" defaultOpen={true}>
                     {/* Job Title and Department */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div className="flex flex-col gap-1.5">
@@ -1430,6 +1536,9 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                       </div>
                     </div>
 
+                    </CollapsibleSection>
+
+                    <CollapsibleSection title="Role Details" defaultOpen={false}>
                     {/* Employment Type Pill Select */}
                     <div className="flex flex-col gap-2">
                       <label className="font-manrope text-xs font-bold text-text-navy">
@@ -1524,6 +1633,26 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                       </div>
                     </div>
 
+                    {/* Notice Period Select */}
+                    <div className="flex flex-col gap-2 mt-4">
+                      <label className="font-manrope text-xs font-bold text-text-navy">
+                        Notice Period
+                      </label>
+                      <select
+                        value={jobForm.noticePeriod}
+                        onChange={(e) => setJobForm(prev => ({ ...prev, noticePeriod: e.target.value }))}
+                        className="w-full px-3 py-2 bg-surface border border-border-warm rounded-lg font-manrope text-xs focus:outline-none focus:border-accent-purple"
+                      >
+                        <option value="Immediate">Immediate</option>
+                        <option value="15 Days">15 Days</option>
+                        <option value="30 Days">30 Days</option>
+                        <option value="60 Days">60 Days</option>
+                        <option value="90 Days">90 Days</option>
+                      </select>
+                    </div>
+                    </CollapsibleSection>
+
+                    <CollapsibleSection title="Responsibilities & Requirements" defaultOpen={false}>
                     {/* Job Description TextArea */}
                     <div className="flex flex-col gap-1.5 bg-purple-50/10 border border-purple-100/30 p-4 sm:p-5 rounded-2xl">
                       <div className="flex justify-between items-center">
@@ -1546,8 +1675,145 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                       <p className="text-[10px] sm:text-xs text-text-muted italic leading-relaxed mt-1">
                         Give this description most of your details. Our semantic parser reads tone, context, and implied tooling to score incoming pre-vetted engineers.
                       </p>
+
+                      {/* --- AI Job Description Assistant Panel --- */}
+                      <div className="mt-3 flex flex-col gap-3">
+                        <Button
+                          variant="secondary"
+                          type="button"
+                          disabled={!jobForm.title || isGeneratingJD}
+                          onClick={async () => {
+                            setIsGeneratingJD(true);
+                            try {
+                              const suggestion = await fetchAIJD(jobForm.title);
+                              setGeneratedJDPreview(suggestion);
+                              setIsEditingPreview(false);
+                            } catch (err) {
+                              console.error("AI Generation failed", err);
+                              triggerToast("AI Generation failed. You can continue typing your description manually.");
+                            } finally {
+                              setIsGeneratingJD(false);
+                            }
+                          }}
+                          className="self-start text-xs font-bold px-4 py-2 border-accent-purple/30 text-accent-purple hover:bg-accent-purple/10 flex items-center gap-1.5"
+                        >
+                          {isGeneratingJD ? (
+                            <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Generating...</>
+                          ) : (
+                            <><Sparkles className="w-3.5 h-3.5" /> Generate AI Suggestion</>
+                          )}
+                        </Button>
+
+                        <AnimatePresence>
+                          {generatedJDPreview && (
+                            <motion.div
+                              initial={{ opacity: 0, height: 0 }}
+                              animate={{ opacity: 1, height: 'auto' }}
+                              exit={{ opacity: 0, height: 0 }}
+                              className="border border-accent-purple/20 bg-accent-purple/5 rounded-xl p-4 flex flex-col gap-3 overflow-hidden"
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-bold text-accent-purple flex items-center gap-1.5">
+                                  <Sparkles className="w-4 h-4" /> AI Suggestion
+                                </span>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setIsEditingPreview(!isEditingPreview)}
+                                    className="p-1.5 text-text-muted hover:text-accent-purple bg-white rounded-lg border border-border-warm shadow-sm transition-colors"
+                                    title="Edit AI Suggestion"
+                                  >
+                                    <Pencil className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      setIsGeneratingJD(true);
+                                      setGeneratedJDPreview(null);
+                                      try {
+                                        const suggestion = await fetchAIJD(jobForm.title);
+                                        setGeneratedJDPreview(suggestion);
+                                        setIsEditingPreview(false);
+                                      } catch (err) {
+                                        triggerToast("AI Generation failed");
+                                      } finally {
+                                        setIsGeneratingJD(false);
+                                      }
+                                    }}
+                                    className="p-1.5 text-text-muted hover:text-accent-orange bg-white rounded-lg border border-border-warm shadow-sm transition-colors"
+                                    title="Regenerate"
+                                  >
+                                    <RotateCcw className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setGeneratedJDPreview(null)}
+                                    className="p-1.5 text-text-muted hover:text-red-500 bg-white rounded-lg border border-border-warm shadow-sm transition-colors"
+                                    title="Discard"
+                                  >
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+
+                              {isEditingPreview ? (
+                                <textarea
+                                  value={generatedJDPreview}
+                                  onChange={(e) => setGeneratedJDPreview(e.target.value)}
+                                  rows={12}
+                                  className="w-full px-3 py-3 bg-white border border-border-warm rounded-xl font-manrope text-xs sm:text-sm focus:outline-none focus:border-accent-purple focus:ring-1 focus:ring-accent-purple transition-all leading-relaxed shadow-inner font-mono whitespace-pre-wrap"
+                                />
+                              ) : (
+                                <div className="text-xs font-manrope text-text-navy/80 bg-white border border-border-warm/50 rounded-xl p-3 max-h-[300px] overflow-y-auto whitespace-pre-wrap">
+                                  {generatedJDPreview}
+                                </div>
+                              )}
+
+                              {/* AI Confidence Score Panel */}
+                              <div className="bg-white border border-accent-purple/20 rounded-xl p-4 mt-1 mb-2 shadow-sm">
+                                <div className="flex items-center justify-between mb-3">
+                                  <span className="text-xs font-bold text-text-navy">AI Understanding Confidence</span>
+                                  <span className="text-sm font-extrabold text-accent-purple bg-accent-purple/10 px-2 py-0.5 rounded-full">96%</span>
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-4">
+                                  {['Role Identified', 'Skills Extracted', 'Responsibilities Parsed', 'Hiring Priorities Identified', 'Technologies Detected'].map((item) => (
+                                    <div key={item} className="flex items-center gap-1.5 text-[10px] sm:text-xs font-manrope font-semibold text-text-navy/80">
+                                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                                      {item}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+
+                              <div className="flex justify-end pt-2">
+                                <Button
+                                  variant="primary"
+                                  type="button"
+                                  onClick={() => {
+                                    setJobForm(prev => ({
+                                      ...prev,
+                                      description: prev.description 
+                                        ? prev.description.trim() + '\n\n' + generatedJDPreview 
+                                        : generatedJDPreview
+                                    }));
+                                    setGeneratedJDPreview(null);
+                                    triggerToast("AI Suggestion added to Job Description");
+                                  }}
+                                  className="text-xs font-bold py-1.5 px-4 bg-accent-purple hover:bg-accent-purple/90 shadow-sm border-none text-white"
+                                >
+                                  <Check className="w-3.5 h-3.5 mr-1" />
+                                  Accept & Append
+                                </Button>
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
                     </div>
 
+                    </CollapsibleSection>
+
+                    <CollapsibleSection title="Compensation" defaultOpen={false}>
                     {/* Salary Range with internal-only public toggle */}
                     <div className="border-t border-border-warm/30 pt-4 flex flex-col gap-3">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1606,6 +1872,9 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                       </div>
                     </div>
 
+                    </CollapsibleSection>
+
+                    <CollapsibleSection title="Skills" defaultOpen={false}>
                     {/* Required Skills Tag Input */}
                     <div className="border-t border-border-warm/30 pt-4 flex flex-col gap-2.5">
                       <div>
@@ -1645,7 +1914,8 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                         ))}
                       </div>
                     </div>
-                  </Card>
+                    </CollapsibleSection>
+                  </div>
 
                   {/* AI PARSE PREVIEW COMPONENT OR TRIGGER */}
                   <div className="space-y-4">
@@ -2008,7 +2278,7 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
 
                           const tagsList = jobForm.requiredSkills.length > 0 ? jobForm.requiredSkills : ['Draft'];
 
-                          await addDoc(collection(db, 'jobs'), {
+                          const docRef = await addDoc(collection(db, 'jobs'), {
                             title: jobForm.title || 'Untitled Draft Job',
                             companyName,
                             logoUrl,
@@ -2027,6 +2297,25 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                             recruiterUid: currentUserId,
                             createdAt: serverTimestamp()
                           });
+
+                          // Trigger AI Job Understanding in the backend
+                          fetch('http://localhost:8000/api/process-job', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              job_id: docRef.id,
+                              description: jobForm.description || 'Draft description.',
+                              location: jobForm.location || 'Anywhere',
+                              salary: formattedSalary,
+                              employmentType: jobForm.employmentType,
+                              jobType: jobForm.employmentType,
+                              companyName: companyName,
+                              workMode: jobForm.locationType,
+                              noticePeriod: jobForm.noticePeriod,
+                              experienceLevel: jobForm.experienceLevel,
+                              industry: industry
+                            })
+                          }).catch(err => console.error("Error triggering backend job processing:", err));
 
                           // Reload jobs
                           const jobsSnapshot = await getDocs(collection(db, 'jobs'));
@@ -2131,7 +2420,7 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                             ? jobForm.requiredSkills 
                             : (jobForm.aiParsedRequirements ? jobForm.aiParsedRequirements.hardRequirements.slice(0, 3) : ['Full-Stack']);
 
-                          await addDoc(collection(db, 'jobs'), {
+                          const docRef = await addDoc(collection(db, 'jobs'), {
                             title: jobForm.title,
                             companyName,
                             logoUrl,
@@ -2150,6 +2439,25 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                             recruiterUid: currentUserId,
                             createdAt: serverTimestamp()
                           });
+
+                          // Trigger AI Job Understanding in the backend
+                          fetch('http://localhost:8000/api/process-job', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              job_id: docRef.id,
+                              description: jobForm.description,
+                              location: jobForm.location,
+                              salary: formattedSalary,
+                              employmentType: jobForm.employmentType,
+                              jobType: jobForm.employmentType,
+                              companyName: companyName,
+                              workMode: jobForm.locationType,
+                              noticePeriod: jobForm.noticePeriod,
+                              experienceLevel: jobForm.experienceLevel,
+                              industry: industry
+                            })
+                          }).catch(err => console.error("Error triggering backend job processing:", err));
 
                           // Reload jobs
                           const jobsSnapshot = await getDocs(collection(db, 'jobs'));
@@ -2239,11 +2547,11 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                   <ArrowLeft className="w-4 h-4 transition-transform group-hover:-translate-x-1" />
                   <span>Back to</span>
                   <span className="font-sora text-text-navy group-hover:text-accent-purple font-extrabold">
-                    {activeRankingJob.title}
+                    {activeRankingJob?.title || 'General Candidates'}
                   </span>
                 </button>
                 <div className="text-[10px] font-mono font-bold text-text-muted bg-border-warm/20 px-2 py-0.5 rounded-full">
-                  Job ID: {activeRankingJob.id}
+                  {activeRankingJob ? `Job ID: ${activeRankingJob.id}` : 'Global Pool'}
                 </div>
               </div>
 
@@ -2251,13 +2559,13 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                 <div>
                   <h1 className="font-sora text-2xl sm:text-3xl font-extrabold text-text-navy tracking-tight leading-tight">
-                    {activeRankingJob.title}
+                    {activeRankingJob?.title || 'Global Candidate Database'}
                   </h1>
                   <p className="font-manrope text-sm text-text-muted mt-1.5 flex items-center gap-1.5">
                     <Sparkles className="w-4 h-4 text-accent-purple fill-accent-purple/10" />
                     <span>{sortedRankingCandidates.length} candidates ranked by AI fit</span>
                     <span className="text-border-warm">•</span>
-                    <span>{activeRankingJob.applicantsCount} total applicants</span>
+                    <span>{activeRankingJob ? activeRankingJob.applicantsCount : candidates.length} total profiles</span>
                   </p>
                 </div>
 
@@ -2879,7 +3187,7 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
           const isPassed = passedNames.includes(cand.name);
           
           // Get deep mock detail data
-          const details = getCandidateDetails(cand.name, cand.title, cand.experience, cand.location);
+          const details = buildCandidateDetails(cand);
 
           // Find current sorted list index to construct Prev / Next triggers
           const currentIndex = sortedRankingCandidates.findIndex(c => c.name === cand.name);

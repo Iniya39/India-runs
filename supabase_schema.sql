@@ -29,6 +29,12 @@ CREATE TABLE IF NOT EXISTS "candidateProfiles" (
   "education" JSONB,
   "projects" JSONB,
   "verification" JSONB,
+  "projectIntelligence" JSONB,
+  "evidenceConfidence" JSONB,
+  "hiddenSkills" JSONB,
+  "careerIntelligence" JSONB,
+  "softSkills" JSONB,
+  "resumeMetadata" JSONB,
   "onboardingStep" INT DEFAULT 0,
   "profileComplete" BOOLEAN DEFAULT false,
   "updatedAt" TIMESTAMPTZ DEFAULT now()
@@ -69,7 +75,22 @@ CREATE TABLE IF NOT EXISTS "jobs" (
   "postedDate" TEXT,
   "isReverseRecruitment" BOOLEAN,
   "recruiterUid" TEXT,
-  "createdAt" TIMESTAMPTZ DEFAULT now()
+  "createdAt" TIMESTAMPTZ DEFAULT now(),
+  "requiredSkills" JSONB,
+  "preferredSkills" JSONB,
+  "mustHaveSkills" JSONB,
+  "niceToHaveSkills" JSONB,
+  "technologies" JSONB,
+  "educationRequirements" TEXT,
+  "certifications" JSONB,
+  "experienceRange" TEXT,
+  "softSkills" JSONB,
+  "responsibilities" JSONB,
+  "domain" TEXT,
+  "jobLevel" TEXT,
+  "AIGeneratedSummary" TEXT,
+  "interviewFocus" JSONB,
+  "hiringPriorities" JSONB
 );
 
 -- 5. Applications Table
@@ -125,3 +146,36 @@ CREATE TABLE IF NOT EXISTS "notifications" (
 -- Make sure to create the storage buckets under the Storage tab in the Supabase Dashboard:
 -- 1. Name: profile-photos, Policy: Public (Allow public read access, upload/update for authenticated users)
 -- 2. Name: company-logos, Policy: Public (Allow public read access, upload/update for authenticated users)
+-- 3. Name: resumes, Policy: Public (Allow public read access, upload/update for authenticated users)
+
+-- 9. Parsed Jobs Table (AI Generated Backend Output)
+CREATE TABLE IF NOT EXISTS "parsed_jobs" (
+  "id" TEXT PRIMARY KEY,
+  "role" TEXT,
+  "department" TEXT,
+  "domain" TEXT,
+  "seniorityLevel" TEXT,
+  "industry" TEXT,
+  "experienceRange" TEXT,
+  "education" TEXT,
+  "primarySkills" JSONB,
+  "secondarySkills" JSONB,
+  "requiredSkills" JSONB,
+  "preferredSkills" JSONB,
+  "mustHaveSkills" JSONB,
+  "niceToHaveSkills" JSONB,
+  "programmingLanguages" JSONB,
+  "frameworks" JSONB,
+  "libraries" JSONB,
+  "databases" JSONB,
+  "cloudPlatforms" JSONB,
+  "devopsTools" JSONB,
+  "aiTechnologies" JSONB,
+  "softSkills" JSONB,
+  "certifications" JSONB,
+  "responsibilities" JSONB,
+  "businessObjectives" JSONB,
+  "hiringPriorities" JSONB,
+  "importantHiddenRequirements" JSONB,
+  "created_at" TIMESTAMPTZ DEFAULT now()
+);

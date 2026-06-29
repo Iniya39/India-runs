@@ -51,6 +51,9 @@ export const supabase = supabaseClient;
 export const auth = {
   get currentUser() {
     return currentUser;
+  },
+  signOut: async () => {
+    return signOut(auth);
   }
 };
 
@@ -624,7 +627,7 @@ export const updateProfile = async (userInstance: any, profileData: { displayNam
   }
 };
 
-export const signInWithPopup = async (authInstance: any, provider: any) => {
+export const signInWithPopup = async (authInstance: any, provider: any): Promise<any> => {
   throw new Error("Social Sign-In is disabled for database authentication.");
 };
 

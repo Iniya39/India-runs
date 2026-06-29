@@ -27,7 +27,8 @@ import { FloatingInfoCard } from '../components/FloatingInfoCard';
 import { NavBar, NavLinkItem } from '../components/NavBar';
 import { PrivateChat } from '../components/PrivateChat';
 import { JobDetailScreen } from './JobDetailScreen';
-import { syncApplicationState } from '../lib/chatUtils';
+import { CandidateAIDashboard } from '../components/CandidateAIDashboard';
+import { syncApplicationState, getCandidateUid } from '../lib/chatUtils';
 import { 
   db, 
   auth, 
@@ -78,7 +79,7 @@ export const CandidateHomeScreen: React.FC<CandidateHomeScreenProps> = ({
   onNavigateToProfile,
 }) => {
   // Navigation tabs state
-  const [activeTab, setActiveTab] = useState<'home' | 'applications' | 'messages' | 'profile'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'applications' | 'messages' | 'profile' | 'ai-profile'>('home');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Deep-link / Hash-based routing state for full Job Detail page
@@ -241,6 +242,12 @@ export const CandidateHomeScreen: React.FC<CandidateHomeScreenProps> = ({
       href: '#profile', 
       active: activeTab === 'profile',
       onClick: onNavigateToProfile 
+    },
+    { 
+      label: 'AI Profile', 
+      href: '#ai-profile', 
+      active: activeTab === 'ai-profile',
+      onClick: () => setActiveTab('ai-profile') 
     },
   ];
 
@@ -429,7 +436,20 @@ export const CandidateHomeScreen: React.FC<CandidateHomeScreenProps> = ({
           )}
         </AnimatePresence>
 
-        {activeTab === 'messages' ? (
+        {activeTab === 'ai-profile' ? (
+          <motion.div
+            key="ai-profile-tab"
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -15 }}
+            transition={{ duration: 0.3 }}
+            className="w-full"
+          >
+            <CandidateAIDashboard 
+              candidateId={userData.uid || auth.currentUser?.uid || getCandidateUid(userData.name || 'Sarah Chen')} 
+            />
+          </motion.div>
+        ) : activeTab === 'messages' ? (
           <motion.div
             key="messages-tab"
             initial={{ opacity: 0, y: 15 }}
