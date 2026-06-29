@@ -1,6 +1,6 @@
 import { doc, getDoc, setDoc, db } from '../supabase';
 
-
+export const getCandidateUid = (name: string) => `mock_candidate_${name.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
 
 export interface ApplicationDoc {
   candidateUid: string;

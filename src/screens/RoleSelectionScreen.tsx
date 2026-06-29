@@ -69,7 +69,7 @@ export const RoleSelectionScreen: React.FC<RoleSelectionScreenProps> = ({
       const userDocRef = doc(db, 'users', currentUser.uid);
       await updateDoc(userDocRef, {
         role: selectedRole,
-        onboardingComplete: true
+        onboardingComplete: false
       });
 
       // Navigate to corresponding screen via callback

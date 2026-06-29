@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+google-genai
+sentence-transformers
+chromadb
+elasticsearch
+pydantic
+python-dotenv
+supabase
+PyMuPDF
+python-docx
+python-multipart

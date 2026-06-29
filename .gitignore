@@ -4,6 +4,6 @@ dist/
 coverage/
 .DS_Store
 *.log
-.env*
+# .env is deliberately included per user request
 !.env.example
 firebase-applet-config.json
