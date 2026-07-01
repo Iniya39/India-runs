@@ -7,3 +7,25 @@ coverage/
 # .env is deliberately included per user request
 !.env.example
 firebase-applet-config.json
+
+# Python virtual environment
+backend/venv/
+venv/
+.venv/
+env/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Large ML/binary files
+*.dll
+*.pyd
+*.exe
+*.bin
+*.onnx
+*.pt
+*.pth
