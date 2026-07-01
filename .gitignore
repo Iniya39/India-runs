@@ -4,8 +4,10 @@ dist/
 coverage/
 .DS_Store
 *.log
-# .env is deliberately included per user request
+# Root .env is deliberately included per user request
 !.env.example
+# Backend .env contains secrets - never commit it
+backend/.env
 firebase-applet-config.json
 
 # Python virtual environment
