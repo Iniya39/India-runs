@@ -35,7 +35,7 @@ def analyze_projects(resume_text: str, projects_json: str) -> List[dict]:
     """
     
     response = client.models.generate_content(
-        model='gemini-2.5-pro',
+        model='gemini-2.5-flash',
         contents=prompt,
         config={
             'response_mime_type': 'application/json',

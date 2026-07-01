@@ -55,7 +55,7 @@ def generate_hiring_decision(job_data: dict, candidate_profile: dict, final_scor
     
     try:
         response = client.models.generate_content(
-            model='gemini-2.5-pro',
+            model='gemini-2.5-flash',
             contents=prompt,
             config={
                 'response_mime_type': 'application/json',

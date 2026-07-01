@@ -10,6 +10,7 @@ export const isConfigValid = !!(supabaseUrl && supabaseAnonKey);
 let supabaseClient: any = null;
 let currentUser: any = null;
 const authListeners = new Set<(user: any) => void>();
+let isRestoringSession = false;
 
 if (isConfigValid) {
   try {
@@ -19,12 +20,14 @@ if (isConfigValid) {
     // Restore session from localStorage for persistence
     const savedUid = localStorage.getItem('talentsphere_session_uid');
     if (savedUid) {
+      isRestoringSession = true;
       supabaseClient
         .from('users')
         .select('*')
         .eq('id', savedUid)
         .maybeSingle()
         .then(({ data, error }: any) => {
+          isRestoringSession = false;
           if (data && !error) {
             currentUser = {
               uid: data.id,
@@ -33,10 +36,10 @@ if (isConfigValid) {
               role: data.role,
               onboardingComplete: data.onboardingComplete
             };
-            // trigger listeners
-            for (const listener of authListeners) {
-              listener(currentUser);
-            }
+          }
+          // trigger listeners
+          for (const listener of authListeners) {
+            listener(currentUser);
           }
         });
     }
@@ -487,7 +490,9 @@ export const onAuthStateChanged = (authInstance: any, callback: (user: any) => v
     return () => {};
   }
   authListeners.add(callback);
-  callback(currentUser);
+  if (!isRestoringSession) {
+    callback(currentUser);
+  }
   return () => {
     authListeners.delete(callback);
   };

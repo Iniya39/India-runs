@@ -44,6 +44,7 @@ export const JobDetailScreen: React.FC<JobDetailScreenProps> = ({
   const [job, setJob] = useState<JobMatch | null>(fallbackJob || null);
   const [loading, setLoading] = useState(!fallbackJob);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showSuccessPopup, setShowSuccessPopup] = useState(false);
 
   // Fetch job details if not already present
   useEffect(() => {
@@ -167,8 +168,7 @@ export const JobDetailScreen: React.FC<JobDetailScreenProps> = ({
         }
       }
 
-      triggerToast("Interest sent! We'll notify you if there's a match.");
-      onInterestExpressed();
+      setShowSuccessPopup(true);
     } catch (err) {
       console.error("Error expressing interest:", err);
       triggerToast("Failed to express interest. Please try again.");
@@ -440,6 +440,36 @@ export const JobDetailScreen: React.FC<JobDetailScreenProps> = ({
           </div>
         </div>
       </div>
+
+      {showSuccessPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-text-navy/40 backdrop-blur-sm p-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-2xl p-6 sm:p-8 max-w-sm w-full shadow-warm-2xl text-center flex flex-col items-center gap-4 border border-border-warm"
+          >
+            <div className="w-16 h-16 bg-success-green/10 rounded-full flex items-center justify-center">
+              <CheckCircle2 className="w-8 h-8 text-success-green" />
+            </div>
+            <div>
+              <h2 className="font-sora font-extrabold text-xl text-text-navy tracking-tight">Interest Sent!</h2>
+              <p className="font-manrope text-sm text-text-muted mt-2 leading-relaxed">
+                We've notified the hiring team. If there's a mutual match, your private chat will unlock automatically.
+              </p>
+            </div>
+            <Button
+              variant="primary"
+              className="w-full mt-2"
+              onClick={() => {
+                setShowSuccessPopup(false);
+                onInterestExpressed();
+              }}
+            >
+              Back to Dashboard
+            </Button>
+          </motion.div>
+        </div>
+      )}
 
     </div>
   );

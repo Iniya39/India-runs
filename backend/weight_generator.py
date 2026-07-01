@@ -31,7 +31,7 @@ def generate_dynamic_weights(job_data: dict) -> dict:
     
     try:
         response = client.models.generate_content(
-            model='gemini-2.5-pro',
+            model='gemini-2.5-flash',
             contents=prompt,
             config={
                 'response_mime_type': 'application/json',

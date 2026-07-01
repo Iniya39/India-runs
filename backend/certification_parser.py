@@ -29,7 +29,7 @@ def analyze_certifications(resume_text: str, base_certifications_json: str) -> L
     """
     
     response = client.models.generate_content(
-        model='gemini-2.5-pro',
+        model='gemini-2.5-flash',
         contents=prompt,
         config={
             'response_mime_type': 'application/json',

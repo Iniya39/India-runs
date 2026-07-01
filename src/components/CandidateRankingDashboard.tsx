@@ -301,6 +301,11 @@ const CandidateRankCard = ({ candidate, rank, isPassive = false, isSelected, onT
               {decision.growth_potential && (
                 <span className="flex items-center gap-1 text-indigo-600 font-bold"><TrendingUp className="w-3 h-3"/> {decision.growth_potential}</span>
               )}
+              {candidate.candidateInterested && (
+                <span className="flex items-center gap-1 text-success-green font-bold bg-success-green/10 px-2 py-0.5 rounded-md border border-success-green/20">
+                  <Sparkles className="w-3 h-3" /> Interested
+                </span>
+              )}
             </div>
           </div>
         </div>

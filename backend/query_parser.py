@@ -27,7 +27,7 @@ def parse_search_query(query: str) -> dict:
     """
     
     response = client.models.generate_content(
-        model='gemini-2.5-pro',
+        model='gemini-2.5-flash',
         contents=prompt,
         config={
             'response_mime_type': 'application/json',
