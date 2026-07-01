@@ -1,5 +1,6 @@
 import logging
 import time
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -85,6 +86,28 @@ async def generate_single_embedding(payload: EmbeddingRequest):
         )
     except Exception as e:
         logger.error(f"Error generating embedding: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate embedding: {str(e)}"
+        )
+
+@app.post("/embed", response_model=EmbeddingResponse)
+async def generate_embed(payload: EmbeddingRequest):
+    """
+    Generate a semantic embedding vector for a single text string.
+    This endpoint offloads the CPU-bound embedding generation to a separate thread
+    to prevent blocking the FastAPI event loop.
+    """
+    try:
+        # Offload CPU-bound inference to a thread pool
+        embedding = await asyncio.to_thread(embedding_service.generate_embedding, payload.text)
+        return EmbeddingResponse(
+            text=payload.text,
+            embedding=embedding,
+            dimensions=len(embedding)
+        )
+    except Exception as e:
+        logger.error(f"Error generating embedding for /embed: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to generate embedding: {str(e)}"
