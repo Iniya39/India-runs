@@ -4,9 +4,10 @@ import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 
 from app import config
-from app.services import embedding_service
+from app.services import embedding_service, similarity_service, ranking_service
 from app.schemas import (
     EmbeddingRequest,
     EmbeddingResponse,
@@ -14,7 +15,14 @@ from app.schemas import (
     BatchEmbeddingResponse,
     SimilarityRequest,
     SimilarityResponse,
+    SemanticSimilarityRequest,
+    SemanticSimilarityResponse,
+    Candidate,
+    RankingRequest,
+    RankedCandidate,
+    RankingResponse,
 )
+from app.schemas.openapi import register_schemas
 
 
 # Configure logging
@@ -47,6 +55,25 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+RANKING_OPENAPI_MODELS = [Candidate, RankingRequest, RankedCandidate, RankingResponse]
+
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    register_schemas(openapi_schema, RANKING_OPENAPI_MODELS)
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
 
 # Add CORS middleware to allow cross-origin requests from frontend and node backend
 app.add_middleware(
@@ -138,6 +165,33 @@ async def generate_batch_embeddings(payload: BatchEmbeddingRequest):
             detail=f"Failed to generate batch embeddings: {str(e)}"
         )
 
+@app.post(
+    "/similarity",
+    response_model=SemanticSimilarityResponse,
+    summary="Compute semantic similarity",
+    response_description="Normalized similarity score as a percentage between 0 and 100.",
+)
+async def compute_semantic_similarity(payload: SemanticSimilarityRequest):
+    """
+    Compare a job description with a candidate profile and return a semantic
+    similarity score (0–100) based on cosine similarity of their embeddings.
+    """
+    try:
+        logger.info("Received semantic similarity request")
+        score = await asyncio.to_thread(
+            similarity_service.compute_similarity,
+            payload.job_description,
+            payload.candidate_profile,
+        )
+        logger.info(f"Semantic similarity computed: {score}%")
+        return SemanticSimilarityResponse(semantic_similarity=score)
+    except Exception as e:
+        logger.error(f"Error computing semantic similarity: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to compute semantic similarity: {str(e)}",
+        )
+
 @app.post("/api/semantic-similarity", response_model=SimilarityResponse)
 async def semantic_similarity(payload: SimilarityRequest):
     """
@@ -162,5 +216,44 @@ async def semantic_similarity(payload: SimilarityRequest):
         raise HTTPException(
             status_code=500,
             detail=f"Failed to compute semantic similarity: {str(e)}"
+        )
+
+@app.post(
+    "/rank",
+    response_model=RankingResponse,
+    summary="Rank candidates for a job",
+    response_description="Candidates ranked by final_score in descending order.",
+)
+async def rank_candidates(payload: RankingRequest):
+    """
+    Rank multiple candidates against a job description using hybrid scoring
+    that combines semantic similarity with structured profile signals.
+    """
+    try:
+        logger.info(
+            "Received candidate ranking request",
+            extra={
+                "candidate_count": len(payload.candidates),
+                "job_description_length": len(payload.job_description),
+            },
+        )
+        rankings = await asyncio.to_thread(
+            ranking_service.rank_candidates,
+            payload,
+        )
+        logger.info(
+            "Candidate ranking request completed",
+            extra={
+                "candidate_count": len(rankings),
+                "top_candidate_id": rankings[0].candidate_id if rankings else None,
+                "top_final_score": rankings[0].final_score if rankings else None,
+            },
+        )
+        return RankingResponse(rankings=rankings)
+    except Exception as e:
+        logger.error(f"Error ranking candidates: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to rank candidates: {str(e)}",
         )
 

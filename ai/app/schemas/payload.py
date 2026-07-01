@@ -29,3 +29,10 @@ class SimilarityResponse(BaseModel):
     model_name: str = Field(..., description="The model name used to generate embeddings.")
     processing_time_ms: float = Field(..., description="The time taken to generate embeddings and compute similarity, in milliseconds.")
 
+class SemanticSimilarityRequest(BaseModel):
+    job_description: str = Field(..., description="The reference job description text.", min_length=1)
+    candidate_profile: str = Field(..., description="The candidate profile text to compare.", min_length=1)
+
+class SemanticSimilarityResponse(BaseModel):
+    semantic_similarity: float = Field(..., description="The normalized similarity score scaled to a 0.0 - 100.0 percentage.")
+

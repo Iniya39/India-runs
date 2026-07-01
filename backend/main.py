@@ -25,6 +25,7 @@ from retrieval_service import retrieve_candidates
 from ranking_engine import rank_candidates
 from reverse_recruitment import find_passive_candidates_for_job
 from comparison_engine import generate_comparison
+from routers import jobs_router
 import uuid
 import datetime
 
@@ -42,6 +43,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(jobs_router, prefix="/api")
 
 # Optional: setup ES index on startup
 @app.on_event("startup")

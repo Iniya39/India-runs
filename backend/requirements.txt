@@ -10,3 +10,7 @@ supabase
 PyMuPDF
 python-docx
 python-multipart
+httpx
+pytest
+pytest-asyncio
+respx

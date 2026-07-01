@@ -5,5 +5,13 @@ from .payload import (
     BatchEmbeddingResponse,
     SimilarityRequest,
     SimilarityResponse,
+    SemanticSimilarityRequest,
+    SemanticSimilarityResponse,
+)
+from .ranking import (
+    Candidate,
+    RankingRequest,
+    RankedCandidate,
+    RankingResponse,
 )
 
