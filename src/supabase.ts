@@ -433,18 +433,19 @@ export const uploadProfilePhoto = async (uid: string, file: File): Promise<strin
     throw new Error("Cannot execute storage upload: invalid configuration.");
   }
   try {
-    const path = `${uid}/${file.name}`;
+    const ext = file.name.split('.').pop();
+    const path = `candidates/${uid}/${Date.now()}.${ext}`;
     const { data, error } = await supabase.storage
-      .from('profile-photos')
+      .from('profile_pics')
       .upload(path, file, { upsert: true });
 
     if (error) {
-      console.error("[Supabase Storage Error] profile-photos upload failed:", error);
+      console.error("[Supabase Storage Error] profile_pics upload failed:", error);
       throw new Error(`Profile photo upload failed: ${error.message || 'Bucket might not exist or is set to private'}`);
     }
 
     const { data: publicUrlData } = supabase.storage
-      .from('profile-photos')
+      .from('profile_pics')
       .getPublicUrl(path);
 
     return publicUrlData.publicUrl;
@@ -459,18 +460,19 @@ export const uploadCompanyLogo = async (companyId: string, file: File): Promise<
     throw new Error("Cannot execute storage upload: invalid configuration.");
   }
   try {
-    const path = `${companyId}/${file.name}`;
+    const ext = file.name.split('.').pop();
+    const path = `companies/${companyId}/${Date.now()}.${ext}`;
     const { data, error } = await supabase.storage
-      .from('company-logos')
+      .from('profile_pics')
       .upload(path, file, { upsert: true });
 
     if (error) {
-      console.error("[Supabase Storage Error] company-logos upload failed:", error);
+      console.error("[Supabase Storage Error] profile_pics upload failed:", error);
       throw new Error(`Company logo upload failed: ${error.message || 'Bucket might not exist or is set to private'}`);
     }
 
     const { data: publicUrlData } = supabase.storage
-      .from('company-logos')
+      .from('profile_pics')
       .getPublicUrl(path);
 
     return publicUrlData.publicUrl;
