@@ -54,6 +54,9 @@ import { FloatingInfoCard } from '../components/FloatingInfoCard';
 import { NavBar, NavLinkItem } from '../components/NavBar';
 import { PrivateChat } from '../components/PrivateChat';
 import { syncApplicationState, getCandidateUid } from '../lib/chatUtils';
+import { AIRecommendationButton } from '../components/AIRecommendationButton';
+import { CandidateSuggestionsDrawer } from '../components/CandidateSuggestionsDrawer';
+import { fetchAISuggestions, RankedCandidate } from '../services/aiSuggestionsService';
 // Removed mock aiUtils import
 import { 
   db, 
@@ -306,6 +309,14 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
   const [candidates, setCandidates] = useState<any[]>([]);
   const [loadingJobs, setLoadingJobs] = useState(true);
   const [loadingCandidates, setLoadingCandidates] = useState(true);
+
+  // --- AI SUGGESTIONS STATE ---
+  const [activeSuggestionsJobId, setActiveSuggestionsJobId] = useState<string | null>(null);
+  const [selectedSuggestionsJobTitle, setSelectedSuggestionsJobTitle] = useState<string>('');
+  const [loadingSuggestionsJobId, setLoadingSuggestionsJobId] = useState<string | null>(null);
+  const [suggestionsInitialCandidates, setSuggestionsInitialCandidates] = useState<RankedCandidate[]>([]);
+  const [suggestionsInitialCount, setSuggestionsInitialCount] = useState<number>(0);
+  const [suggestionsInitialElapsedMs, setSuggestionsInitialElapsedMs] = useState<number>(0);
 
   // --- JOB POSTING SCREEN STATE LAYER ---
   const [jobForm, setJobForm] = useState({
@@ -736,6 +747,24 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
     setActiveView('ranking');
     setActiveTab('candidates');
     triggerToast(`Opening match analysis for ${job.title}`);
+  };
+
+  const handleFetchSuggestionsClick = async (jobId: string, jobTitle: string) => {
+    if (loadingSuggestionsJobId) return;
+    setLoadingSuggestionsJobId(jobId);
+    try {
+      const response = await fetchAISuggestions(jobId);
+      setSuggestionsInitialCandidates(response.rankings || []);
+      setSuggestionsInitialCount(response.candidate_count || 0);
+      setSuggestionsInitialElapsedMs(response.elapsed_ms || 0);
+      setSelectedSuggestionsJobTitle(jobTitle);
+      setActiveSuggestionsJobId(jobId);
+    } catch (err: any) {
+      const errMsg = err.message || "Failed to load candidate suggestions.";
+      triggerToast(`Error: ${errMsg}`);
+    } finally {
+      setLoadingSuggestionsJobId(null);
+    }
   };
 
   // Action: Submit Direct Pitch to Candidate
@@ -1388,7 +1417,12 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                           Edit job
                         </button>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <AIRecommendationButton
+                            onClick={() => handleFetchSuggestionsClick(job.id, job.title)}
+                            isLoading={loadingSuggestionsJobId === job.id}
+                          />
+
                           {/* Trash button helper */}
                           <button
                             onClick={(e) => handleDeleteJob(job.id, e)}
@@ -3778,6 +3812,24 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
             </div>
           );
         })()}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {activeSuggestionsJobId && (
+          <CandidateSuggestionsDrawer
+            jobId={activeSuggestionsJobId}
+            jobTitle={selectedSuggestionsJobTitle}
+            initialCandidates={suggestionsInitialCandidates}
+            initialCount={suggestionsInitialCount}
+            initialElapsedMs={suggestionsInitialElapsedMs}
+            onClose={() => {
+              setActiveSuggestionsJobId(null);
+              setSuggestionsInitialCandidates([]);
+              setSuggestionsInitialCount(0);
+              setSuggestionsInitialElapsedMs(0);
+            }}
+          />
+        )}
       </AnimatePresence>
 
     </div>

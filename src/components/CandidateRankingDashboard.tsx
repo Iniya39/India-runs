@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Award, Briefcase, Code2, GraduationCap, ChevronDown, ChevronUp, 
-  Sparkles, Zap, BrainCircuit, Loader2, UserPlus, AlertTriangle, TrendingUp, MessagesSquare, Download, CheckSquare
+  Sparkles, Zap, BrainCircuit, Loader2, UserPlus, AlertTriangle, TrendingUp, MessagesSquare, Download, CheckSquare,
+  CheckCircle2
 } from 'lucide-react';
 
 interface CandidateRankingDashboardProps {
