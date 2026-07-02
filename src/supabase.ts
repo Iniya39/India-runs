@@ -10,6 +10,7 @@ export const isConfigValid = !!(supabaseUrl && supabaseAnonKey);
 let supabaseClient: any = null;
 let currentUser: any = null;
 const authListeners = new Set<(user: any) => void>();
+let isRestoringSession = false;
 
 if (isConfigValid) {
   try {
@@ -19,12 +20,14 @@ if (isConfigValid) {
     // Restore session from localStorage for persistence
     const savedUid = localStorage.getItem('talentsphere_session_uid');
     if (savedUid) {
+      isRestoringSession = true;
       supabaseClient
         .from('users')
         .select('*')
         .eq('id', savedUid)
         .maybeSingle()
         .then(({ data, error }: any) => {
+          isRestoringSession = false;
           if (data && !error) {
             currentUser = {
               uid: data.id,
@@ -33,10 +36,10 @@ if (isConfigValid) {
               role: data.role,
               onboardingComplete: data.onboardingComplete
             };
-            // trigger listeners
-            for (const listener of authListeners) {
-              listener(currentUser);
-            }
+          }
+          // trigger listeners
+          for (const listener of authListeners) {
+            listener(currentUser);
           }
         });
     }
@@ -430,18 +433,19 @@ export const uploadProfilePhoto = async (uid: string, file: File): Promise<strin
     throw new Error("Cannot execute storage upload: invalid configuration.");
   }
   try {
-    const path = `${uid}/${file.name}`;
+    const ext = file.name.split('.').pop();
+    const path = `candidates/${uid}/${Date.now()}.${ext}`;
     const { data, error } = await supabase.storage
-      .from('profile-photos')
+      .from('profile_pics')
       .upload(path, file, { upsert: true });
 
     if (error) {
-      console.error("[Supabase Storage Error] profile-photos upload failed:", error);
+      console.error("[Supabase Storage Error] profile_pics upload failed:", error);
       throw new Error(`Profile photo upload failed: ${error.message || 'Bucket might not exist or is set to private'}`);
     }
 
     const { data: publicUrlData } = supabase.storage
-      .from('profile-photos')
+      .from('profile_pics')
       .getPublicUrl(path);
 
     return publicUrlData.publicUrl;
@@ -456,18 +460,19 @@ export const uploadCompanyLogo = async (companyId: string, file: File): Promise<
     throw new Error("Cannot execute storage upload: invalid configuration.");
   }
   try {
-    const path = `${companyId}/${file.name}`;
+    const ext = file.name.split('.').pop();
+    const path = `companies/${companyId}/${Date.now()}.${ext}`;
     const { data, error } = await supabase.storage
-      .from('company-logos')
+      .from('profile_pics')
       .upload(path, file, { upsert: true });
 
     if (error) {
-      console.error("[Supabase Storage Error] company-logos upload failed:", error);
+      console.error("[Supabase Storage Error] profile_pics upload failed:", error);
       throw new Error(`Company logo upload failed: ${error.message || 'Bucket might not exist or is set to private'}`);
     }
 
     const { data: publicUrlData } = supabase.storage
-      .from('company-logos')
+      .from('profile_pics')
       .getPublicUrl(path);
 
     return publicUrlData.publicUrl;
@@ -487,7 +492,9 @@ export const onAuthStateChanged = (authInstance: any, callback: (user: any) => v
     return () => {};
   }
   authListeners.add(callback);
-  callback(currentUser);
+  if (!isRestoringSession) {
+    callback(currentUser);
+  }
   return () => {
     authListeners.delete(callback);
   };

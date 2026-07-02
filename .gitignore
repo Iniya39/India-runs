@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # dependencies
 node_modules/
 
@@ -24,3 +25,38 @@ coverage/
 
 # firebase config (only if sensitive in your project)
 firebase-applet-config.json
+=======
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+# Root .env is deliberately included per user request
+!.env.example
+# Backend .env contains secrets - never commit it
+backend/.env
+firebase-applet-config.json
+
+# Python virtual environment
+backend/venv/
+venv/
+.venv/
+env/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Large ML/binary files
+*.dll
+*.pyd
+*.exe
+*.bin
+*.onnx
+*.pt
+*.pth
+>>>>>>> origin/Version-2

@@ -302,6 +302,7 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
   // Navigation tabs state
   const [activeTab, setActiveTab] = useState<'home' | 'candidates' | 'search-candidates' | 'messages' | 'company-settings'>('home');
   const [activeView, setActiveView] = useState<'home' | 'ranking' | 'post-job'>('home');
+  const [editingJobId, setEditingJobId] = useState<string | null>(null);
   
   // Jobs List State
   const [jobs, setJobs] = useState<RecruiterJob[]>([]);
@@ -317,7 +318,6 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
   const [suggestionsInitialCandidates, setSuggestionsInitialCandidates] = useState<RankedCandidate[]>([]);
   const [suggestionsInitialCount, setSuggestionsInitialCount] = useState<number>(0);
   const [suggestionsInitialElapsedMs, setSuggestionsInitialElapsedMs] = useState<number>(0);
-
   // --- JOB POSTING SCREEN STATE LAYER ---
   const [jobForm, setJobForm] = useState({
     title: '',
@@ -358,7 +358,43 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
   const [generatedJDPreview, setGeneratedJDPreview] = useState<string | null>(null);
   const [isEditingPreview, setIsEditingPreview] = useState(false);
 
+  const handleEditJob = (job: RecruiterJob) => {
+    setEditingJobId(job.id);
+    
+    let minStr = '';
+    let maxStr = '';
+    const salaryMatch = job.salary.match(/₹([0-9,]+)\s*-\s*₹([0-9,]+)/);
+    if (salaryMatch) {
+      minStr = salaryMatch[1].replace(/,/g, '');
+      maxStr = salaryMatch[2].replace(/,/g, '');
+    }
+
+    let locationTypeStr = 'Remote';
+    if (job.location.includes('(Hybrid)')) locationTypeStr = 'Hybrid';
+    else if (job.location.includes('(On-site)')) locationTypeStr = 'On-site';
+
+    setJobForm({
+      title: job.title,
+      department: '',
+      employmentType: job.jobType || 'Full-time',
+      location: job.location.split(' (')[0],
+      locationType: locationTypeStr,
+      experienceLevel: job.experienceLevel || 'Senior',
+      description: job.description,
+      salaryMin: minStr,
+      salaryMax: maxStr,
+      salaryCurrency: 'INR',
+      salaryPublic: job.salary !== 'Not displayed publicly',
+      noticePeriod: 'Immediate',
+      requiredSkills: job.tags || [],
+      aiParsedRequirements: null,
+      status: job.status === 'Closed' ? 'draft' : 'active'
+    });
+    setActiveView('post-job');
+  };
+
   const resetJobForm = () => {
+    setEditingJobId(null);
     setJobForm({
       title: '',
       department: '',
@@ -595,6 +631,15 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
         setCandidates(candList);
         setLoadingCandidates(false);
 
+        // 1.5 Fetch applications to track candidate interest
+        const appsSnapshot = await getDocs(query(collection(db, 'applications'), where('recruiterUid', '==', currentUserId)));
+        const applicationsMap: Record<string, boolean> = {};
+        appsSnapshot.forEach((docSnap) => {
+          const app = docSnap.data();
+          if (app.candidateInterested) {
+            applicationsMap[`${app.candidateUid}_${app.jobId}`] = true;
+          }
+        });
         // 2. Fetch jobs
         const jobsSnapshot = await getDocs(collection(db, 'jobs'));
         const jobsList: RecruiterJob[] = [];
@@ -615,7 +660,8 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                 matchScore: matchResult.matchScore,
                 whyMatched: matchResult.whyMatched,
                 matchBreakdown: matchResult.matchBreakdown,
-                recentlyActive: true
+                recentlyActive: true,
+                candidateInterested: applicationsMap[`${cand.id}_${docSnap.id}`] || false
               };
             }).sort((a, b) => b.matchScore - a.matchScore);
 
@@ -766,7 +812,6 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
       setLoadingSuggestionsJobId(null);
     }
   };
-
   // Action: Submit Direct Pitch to Candidate
   const handleSendDirectPitch = () => {
     if (!activePitchCandidate) return;
@@ -1411,10 +1456,10 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                       <div className="flex items-center justify-between gap-4 mt-2">
                         {/* Edit job - Secondary Link */}
                         <button
-                          onClick={() => triggerToast(`Edit Job details modal for "${job.title}" (Placeholder)`)}
-                          className="text-xs font-semibold text-text-muted hover:text-accent-purple transition-colors cursor-pointer"
+                          onClick={() => handleEditJob(job)}
+                          className="text-xs font-semibold text-text-muted hover:text-accent-purple transition-colors cursor-pointer flex items-center gap-1"
                         >
-                          Edit job
+                          <Pencil className="w-3.5 h-3.5" /> Edit job
                         </button>
 
                         <div className="flex flex-wrap items-center gap-2">
@@ -1422,7 +1467,6 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                             onClick={() => handleFetchSuggestionsClick(job.id, job.title)}
                             isLoading={loadingSuggestionsJobId === job.id}
                           />
-
                           {/* Trash button helper */}
                           <button
                             onClick={(e) => handleDeleteJob(job.id, e)}
@@ -1503,10 +1547,10 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                 </button>
                 <div className="mt-2">
                   <h1 className="font-sora font-extrabold text-2xl sm:text-3xl text-text-navy tracking-tight">
-                    Post a new job
+                    {editingJobId ? 'Edit Job Posting' : 'Post a new job'}
                   </h1>
                   <p className="font-manrope text-xs sm:text-sm text-text-muted mt-1 leading-relaxed">
-                    Write it naturally — our AI reads between the lines to understand what you actually need.
+                    {editingJobId ? 'Make your changes below. The AI will re-analyze your updates automatically.' : 'Write it naturally — our AI reads between the lines to understand what you actually need.'}
                   </p>
                 </div>
               </div>
@@ -2312,7 +2356,7 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
 
                           const tagsList = jobForm.requiredSkills.length > 0 ? jobForm.requiredSkills : ['Draft'];
 
-                          const docRef = await addDoc(collection(db, 'jobs'), {
+                          const jobPayload = {
                             title: jobForm.title || 'Untitled Draft Job',
                             companyName,
                             logoUrl,
@@ -2329,15 +2373,23 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                             jobType: jobForm.employmentType,
                             isReverseRecruitment: false,
                             recruiterUid: currentUserId,
-                            createdAt: serverTimestamp()
-                          });
+                            ...(editingJobId ? {} : { createdAt: serverTimestamp() })
+                          };
+
+                          let jobIdToProcess = editingJobId;
+                          if (editingJobId) {
+                            await updateDoc(doc(db, 'jobs', editingJobId), jobPayload);
+                          } else {
+                            const docRef = await addDoc(collection(db, 'jobs'), jobPayload);
+                            jobIdToProcess = docRef.id;
+                          }
 
                           // Trigger AI Job Understanding in the backend
                           fetch('http://localhost:8000/api/process-job', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
-                              job_id: docRef.id,
+                              job_id: jobIdToProcess,
                               description: jobForm.description || 'Draft description.',
                               location: jobForm.location || 'Anywhere',
                               salary: formattedSalary,
@@ -2454,15 +2506,15 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                             ? jobForm.requiredSkills 
                             : (jobForm.aiParsedRequirements ? jobForm.aiParsedRequirements.hardRequirements.slice(0, 3) : ['Full-Stack']);
 
-                          const docRef = await addDoc(collection(db, 'jobs'), {
+                          const jobPayload = {
                             title: jobForm.title,
                             companyName,
                             logoUrl,
                             industry,
                             companySize,
-                            postedDate: 'Today',
+                            postedDate: editingJobId ? undefined : 'Today', // Don't overwrite if editing, though keeping Today is fine for now
                             status: 'Active',
-                            applicantsCount: 0,
+                            applicantsCount: 0, // In a real app we'd preserve this
                             tags: tagsList,
                             description: jobForm.description,
                             salary: formattedSalary,
@@ -2471,15 +2523,25 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
                             jobType: jobForm.employmentType,
                             isReverseRecruitment: false,
                             recruiterUid: currentUserId,
-                            createdAt: serverTimestamp()
-                          });
+                            ...(editingJobId ? {} : { createdAt: serverTimestamp() })
+                          };
+
+                          let jobIdToProcess = editingJobId;
+                          if (editingJobId) {
+                            delete jobPayload.applicantsCount; // Preserve applicants count when updating
+                            if (jobPayload.postedDate === undefined) delete jobPayload.postedDate;
+                            await updateDoc(doc(db, 'jobs', editingJobId), jobPayload);
+                          } else {
+                            const docRef = await addDoc(collection(db, 'jobs'), jobPayload);
+                            jobIdToProcess = docRef.id;
+                          }
 
                           // Trigger AI Job Understanding in the backend
                           fetch('http://localhost:8000/api/process-job', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
-                              job_id: docRef.id,
+                              job_id: jobIdToProcess,
                               description: jobForm.description,
                               location: jobForm.location,
                               salary: formattedSalary,
@@ -3831,7 +3893,6 @@ export const RecruiterHomeScreen: React.FC<RecruiterHomeScreenProps> = ({
           />
         )}
       </AnimatePresence>
-
     </div>
   );
 };
